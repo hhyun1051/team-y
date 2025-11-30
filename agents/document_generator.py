@@ -14,7 +14,7 @@ from docx import Document
 class DocumentGenerator:
     """문서 생성 및 PDF 변환 유틸리티"""
 
-    TEMPLATE_DIR = Path("/root/office-worker/templates")
+    TEMPLATE_DIR = Path("/root/team-y/templates")
     OUTPUT_DIR = Path("/tmp")
 
     @staticmethod

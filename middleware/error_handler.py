@@ -36,7 +36,7 @@ class ToolErrorHandlerMiddleware(AgentMiddleware):
         )
 
         agent = create_agent(
-            model="gpt-4o",
+            model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
             tools=[my_tools],
             middleware=[error_handler]
         )

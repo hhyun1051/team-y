@@ -197,7 +197,7 @@ async def on_ready():
 
     # 워크플로우 그래프 초기화
     workflow_graph = OfficeAutomationGraph(
-        model_name="gpt-4o-mini",
+        model_name=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
         temperature=0.0,
         use_langfuse=True
     )
@@ -379,7 +379,7 @@ async def handle_voice_message(message: discord.Message, attachment: discord.Att
 
         with open(tmp_path, "rb") as audio_file:
             transcription = client.audio.transcriptions.create(
-                model="whisper-1",
+                model=os.getenv("OPENAI_WHISPER_MODEL", "whisper-1"),
                 file=audio_file,
                 language="ko"  # 한국어 지정
             )

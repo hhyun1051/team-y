@@ -84,17 +84,20 @@ class OfficeAutomationGraph:
 **워크플로우:**
 
 1. **정보 승인 요청**
-   - `request_approval_delivery` 또는 `request_approval_product` tool 호출
-   - 사용자가 버튼으로 승인/거절/편집 선택
+   - 사용자가 지시한 대로 정확히 `request_approval_delivery` 또는 `request_approval_product` tool을 호출하세요
+   - tool 호출 시 parsed_info 파라미터에 포맷팅된 정보를 전달하세요
+   - tool 호출 후 "승인을 기다립니다"라고만 응답하세요
 
-2. **문서 자동 생성**
-   - 승인되면 즉시 `generate_delivery_document` 또는 `generate_product_document` tool 호출
-   - 별도 승인 없이 자동으로 문서 생성 및 전송
+2. **승인 후 문서 자동 생성 (매우 중요!)**
+   - 승인 도구의 응답을 받으면 IMMEDIATELY(즉시) 문서 생성 도구를 호출해야 합니다
+   - `generate_delivery_document` 또는 `generate_product_document` tool을 사용자가 지시한 파라미터로 정확히 호출하세요
+   - 추가 승인이나 대기 없이 바로 문서를 생성하세요
+   - 문서 생성 tool의 응답을 그대로 사용자에게 전달하세요
 
 **중요 규칙:**
-- 승인 tool 호출 시: 파싱된 정보를 명확히 포함
-- 승인 후: 자동으로 문서 생성 tool을 즉시 호출 (추가 승인 불필요)
-- 응답은 간결하게: "승인을 기다립니다" 같은 불필요한 메시지 금지
+- 승인 tool 응답 후 반드시 문서 생성 tool을 호출하세요 (필수!)
+- 사용자의 지시사항에 있는 파라미터를 정확히 사용하세요
+- 승인을 기다리거나 추가 확인을 요청하지 마세요
 """
 
         # Agent 생성
