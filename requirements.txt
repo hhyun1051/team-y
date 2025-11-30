@@ -1,0 +1,36 @@
+# Discord Bot
+discord.py>=2.3.0
+
+# LangChain & LangGraph
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+langgraph>=0.2.0
+langgraph-checkpoint>=0.2.0
+langgraph-checkpoint-postgres>=0.2.0
+
+# OpenAI (Whisper API)
+openai>=1.0.0
+
+# Langfuse (Observability)
+langfuse>=3.0.0
+
+# Database
+psycopg>=3.1.0
+psycopg-pool>=3.2.0
+
+# Document Processing
+python-docx>=1.0.0
+python-pptx>=0.6.21
+
+# PDF Conversion (LibreOffice headless required on system)
+# sudo apt-get install libreoffice
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Pydantic for structured outputs
+pydantic>=2.0.0
+
+# YAML for config files
+PyYAML>=6.0
