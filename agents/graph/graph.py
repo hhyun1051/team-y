@@ -1,33 +1,28 @@
 """
-Office Automation Workflow
+Office Automation Workflow - LangGraph StateGraph 기반
 
-HumanInTheLoopMiddleware를 사용하는 Agent 기반 워크플로우
+노드 기반 워크플로우:
+1. classify_intent → 의도 분류
+2. help / delivery_subgraph / product_subgraph / aluminum_subgraph → 시나리오별 처리
 """
 
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 
-from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware
-from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
+from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import HumanMessage, AIMessage
 
 # Langfuse 통합
 from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 
 # Local imports
+from .state import OfficeAutomationState
 from .utils.intent_classifier import IntentClassifier
 from .utils.parsers import DeliveryParser, ProductOrderParser
 from .utils.document_generator import DocumentGenerator
-from .utils.tools import (
-    request_approval_delivery,
-    request_approval_product,
-    generate_delivery_document,
-    generate_product_document,
-)
 from .utils.tools.aluminum_calculator import (
     calculate_aluminum_price_square_pipe,
     calculate_aluminum_price_round_pipe,
@@ -38,11 +33,12 @@ from .utils.tools.aluminum_calculator import (
     calculate_price_from_weight_and_price_per_kg,
     calculate_price_per_kg_from_unit_price_and_weight,
 )
+from .subgraphs import create_delivery_subgraph, create_product_subgraph, create_aluminum_subgraph
 from ..middleware import LangfuseToolLoggingMiddleware
 
 
 class OfficeAutomationGraph:
-    """사무 자동화 Agent (HITL 미들웨어 사용)"""
+    """사무 자동화 그래프 (LangGraph StateGraph 기반)"""
 
     def __init__(
         self,
@@ -58,7 +54,7 @@ class OfficeAutomationGraph:
             temperature: 모델 temperature
             use_langfuse: Langfuse 로깅 사용 여부
         """
-        print(f"[🤖] Initializing Office Automation Agent with HITL...")
+        print(f"[🤖] Initializing Office Automation Graph (StateGraph)...")
 
         # 환경 변수 로드
         load_dotenv()
@@ -78,93 +74,51 @@ class OfficeAutomationGraph:
         # 체크포인터 (메모리 저장)
         self.checkpointer = MemorySaver()
 
-        # Middleware 설정
-        middlewares = []
-
-        # Langfuse Tool Logging Middleware
+        # Middleware 설정 (AluminumSubGraph용)
+        aluminum_middlewares = []
         if self.use_langfuse and self.langfuse_client:
             langfuse_middleware = LangfuseToolLoggingMiddleware(
                 langfuse_client=self.langfuse_client,
                 verbose=True,
                 log_errors=True
             )
-            middlewares.append(langfuse_middleware)
+            aluminum_middlewares.append(langfuse_middleware)
 
-        # HITL 미들웨어 설정 (정보 확인만 승인, 문서 생성은 자동)
-        hitl_middleware = HumanInTheLoopMiddleware(
-            interrupt_on={
-                "request_approval_delivery": True,  # 운송장 정보 승인
-                "request_approval_product": True,  # 거래명세서 정보 승인
-            },
-            description_prefix="승인이 필요합니다",
-        )
-        middlewares.append(hitl_middleware)
+        # 알루미늄 계산 도구 리스트
+        aluminum_tools = [
+            calculate_aluminum_price_square_pipe,
+            calculate_aluminum_price_round_pipe,
+            calculate_aluminum_price_angle,
+            calculate_aluminum_price_flat_bar,
+            calculate_aluminum_price_round_bar,
+            calculate_aluminum_price_channel,
+            calculate_price_from_weight_and_price_per_kg,
+            calculate_price_per_kg_from_unit_price_and_weight,
+        ]
 
-        # System prompt
-        system_prompt = """당신은 사무 자동화 전문가입니다.
-
-사용자가 입력한 텍스트에서 정보를 추출하고, 사용자 승인을 받은 후 자동으로 문서를 생성하거나 계산을 수행합니다.
-
-**워크플로우:**
-
-1. **정보 승인 요청 (첫 번째 단계 - 문서 생성 시나리오만 해당)**
-   - 사용자가 지시한 대로 정확히 `request_approval_delivery` 또는 `request_approval_product` tool을 호출하세요
-   - tool 호출 시 parsed_info 파라미터에 포맷팅된 정보를 전달하세요
-   - tool 호출 후 "승인을 기다립니다"라고만 응답하세요
-   - 이 메시지 이후 워크플로우는 일시 중단되며, 사용자의 승인을 기다립니다
-
-2. **승인 후 문서 자동 생성 (두 번째 단계 - 승인 완료 후 재개)**
-   - 승인 도구가 "승인되었습니다"라는 응답을 반환하면, IMMEDIATELY(즉시) 문서 생성 도구를 호출하세요
-   - `generate_delivery_document` 또는 `generate_product_document` tool을 사용자가 지시한 파라미터로 정확히 호출하세요
-   - 추가 승인이나 대기 없이 바로 문서를 생성하세요
-   - 문서 생성 tool의 응답을 **절대 수정하지 말고** **정확히 그대로** 사용자에게 전달하세요
-   - Tool이 반환한 텍스트를 재작성하거나 요약하지 마세요
-   - "승인을 기다립니다"라는 메시지는 절대 반복하지 마세요
-
-3. **알루미늄 계산 (즉시 실행)**
-   - 알루미늄 제품 단가 계산 요청 시 적절한 계산 tool을 즉시 호출하세요
-   - 승인 프로세스 없이 바로 계산 결과를 반환합니다
-   - 사용 가능한 계산 tools:
-     * calculate_aluminum_price_square_pipe: 사각파이프
-     * calculate_aluminum_price_round_pipe: 원파이프
-     * calculate_aluminum_price_angle: 앵글(ㄱ자)
-     * calculate_aluminum_price_flat_bar: 평철
-     * calculate_aluminum_price_round_bar: 환봉
-     * calculate_aluminum_price_channel: 찬넬(C형강)
-     * calculate_price_from_weight_and_price_per_kg: 중량×kg당가격→개당가격
-     * calculate_price_per_kg_from_unit_price_and_weight: 제품단가÷중량→kg당가격
-
-**중요 규칙:**
-- 승인 tool이 "승인되었습니다" 응답을 반환하면, 반드시 문서 생성 tool을 즉시 호출하세요 (필수!)
-- 문서 생성 tool이 반환한 메시지를 **한 글자도 바꾸지 말고** 그대로 사용자에게 전달하세요
-- Tool의 출력 형식(마크다운, 이모지, 줄바꿈 등)을 보존하세요
-- "승인을 기다립니다"는 첫 번째 승인 요청 시에만 사용하고, 승인 완료 후에는 절대 사용하지 마세요
-- 알루미늄 계산은 승인 없이 즉시 실행하세요
-"""
-
-        # Agent 생성
-        self.agent = create_agent(
-            model=f"openai:{model_name}",
-            tools=[
-                request_approval_delivery,
-                request_approval_product,
-                generate_delivery_document,
-                generate_product_document,
-                calculate_aluminum_price_square_pipe,
-                calculate_aluminum_price_round_pipe,
-                calculate_aluminum_price_angle,
-                calculate_aluminum_price_flat_bar,
-                calculate_aluminum_price_round_bar,
-                calculate_aluminum_price_channel,
-                calculate_price_from_weight_and_price_per_kg,
-                calculate_price_per_kg_from_unit_price_and_weight,
-            ],
-            system_prompt=system_prompt,
-            middleware=middlewares,
+        # 서브그래프 생성
+        print(f"[🔨] Creating subgraphs...")
+        self.delivery_subgraph = create_delivery_subgraph(
             checkpointer=self.checkpointer,
+            delivery_parser=self.delivery_parser,
+            document_generator=DocumentGenerator
+        )
+        self.product_subgraph = create_product_subgraph(
+            checkpointer=self.checkpointer,
+            product_parser=self.product_parser,
+            document_generator=DocumentGenerator
+        )
+        self.aluminum_subgraph = create_aluminum_subgraph(
+            model_name=model_name,
+            temperature=temperature,
+            aluminum_tools=aluminum_tools,
+            middleware=aluminum_middlewares if aluminum_middlewares else None
         )
 
-        print(f"[✅] Office Automation Agent initialized successfully")
+        # 메인 그래프 빌드
+        self.graph = self._build_graph()
+
+        print(f"[✅] Office Automation Graph initialized successfully")
 
     def _init_langfuse(self):
         """Langfuse 초기화"""
@@ -180,68 +134,93 @@ class OfficeAutomationGraph:
             print(f"[⚠️] Langfuse initialization failed: {e}")
             self.langfuse_client = None
 
-    def _format_parsed_info(self, parsed) -> str:
-        """파싱된 정보를 승인 메시지로 포맷팅"""
-        lines = []
+    def _build_graph(self) -> StateGraph:
+        """메인 그래프 빌드"""
+        workflow = StateGraph(OfficeAutomationState)
 
-        # 시나리오 1: 배송 정보
-        if parsed.name or parsed.phone or parsed.address:
-            lines.append("**배송 정보:**")
-            if parsed.name:
-                lines.append(f"- 이름: {parsed.name}")
-            if parsed.phone:
-                lines.append(f"- 전화번호: {parsed.phone}")
-            if parsed.address:
-                lines.append(f"- 주소: {parsed.address}")
+        # 노드 추가
+        workflow.add_node("classify_intent", self._classify_intent_node)
+        workflow.add_node("help", self._help_node)
+        workflow.add_node("delivery_subgraph", self.delivery_subgraph)
+        workflow.add_node("product_subgraph", self.product_subgraph)
+        workflow.add_node("aluminum_subgraph", self.aluminum_subgraph)
 
-        # 시나리오 2: 제품 주문
-        if parsed.product_type or parsed.specifications or parsed.quantity:
-            lines.append("**제품 주문 정보:**")
-            if parsed.product_type:
-                lines.append(f"- 제품 종류: {parsed.product_type}")
-            if parsed.specifications:
-                lines.append(f"- 제원: {parsed.specifications}")
-            if parsed.quantity:
-                lines.append(f"- 수량: {parsed.quantity}개")
+        # 엣지 연결
+        workflow.set_entry_point("classify_intent")
 
-        # 신뢰도
-        if parsed.confidence is not None:
-            lines.append(f"\n신뢰도: {parsed.confidence * 100:.0f}%")
+        # classify_intent 후: 시나리오별 라우팅
+        workflow.add_conditional_edges(
+            "classify_intent",
+            self._route_by_scenario,
+            {
+                "help": "help",
+                "delivery": "delivery_subgraph",
+                "product_order": "product_subgraph",
+                "aluminum_calculation": "aluminum_subgraph",
+            }
+        )
 
-        return "\n".join(lines)
+        # 각 노드 → END
+        workflow.add_edge("help", END)
+        workflow.add_edge("delivery_subgraph", END)
+        workflow.add_edge("product_subgraph", END)
+        workflow.add_edge("aluminum_subgraph", END)
 
-    def invoke(
-        self,
-        raw_input: str,
-        input_type: str = "text",
-        discord_user_id: Optional[str] = None,
-        discord_channel_id: Optional[str] = None,
-        thread_id: str = "default",
-    ) -> Dict[str, Any]:
+        # Compile
+        return workflow.compile(checkpointer=self.checkpointer)
+
+    # ========================================================================
+    # 노드 함수들
+    # ========================================================================
+
+    def _classify_intent_node(self, state: OfficeAutomationState) -> Dict[str, Any]:
         """
-        워크플로우 실행
+        의도 분류 노드
 
         Args:
-            raw_input: 입력 텍스트 (원본 또는 음성 변환)
-            input_type: 입력 타입 ("text" 또는 "voice")
-            discord_user_id: 디스코드 사용자 ID
-            discord_channel_id: 디스코드 채널 ID
-            thread_id: 스레드 ID (대화 세션 식별)
+            state: 현재 상태
 
         Returns:
-            Agent 실행 결과 (interrupt 발생 시 __interrupt__ 포함)
+            업데이트된 상태 (scenario, confidence)
         """
+        raw_input = state.get("raw_input", "")
         print(f"[🔍] Classifying intent: {raw_input[:50]}...")
 
-        # 1단계: 의도 분류
         intent = self.intent_classifier.classify(raw_input)
-        print(f"[🎯] Intent classification: {intent.scenario} (confidence: {intent.confidence:.2f})")
+        print(f"[🎯] Intent: {intent.scenario} (confidence: {intent.confidence:.2f})")
 
-        # 2단계: 시나리오별 처리
-        if intent.scenario == "help":
-            # 도움말 시나리오 - 파싱 없이 바로 응답
-            print(f"[ℹ️] Help scenario detected")
-            help_message = """안녕하세요! 저는 사무 자동화 봇입니다. 👋
+        return {
+            "scenario": intent.scenario,
+            "confidence": intent.confidence
+        }
+
+    def _route_by_scenario(self, state: OfficeAutomationState) -> str:
+        """
+        시나리오별 라우팅 함수
+
+        Args:
+            state: 현재 상태
+
+        Returns:
+            다음 노드 이름
+        """
+        scenario = state.get("scenario")
+        print(f"[🧭] Routing to: {scenario}")
+        return scenario
+
+    def _help_node(self, state: OfficeAutomationState) -> Dict[str, Any]:
+        """
+        도움말 노드
+
+        Args:
+            state: 현재 상태
+
+        Returns:
+            업데이트된 상태 (messages)
+        """
+        print(f"[ℹ️] Providing help message")
+
+        help_message = """안녕하세요! 저는 사무 자동화 봇입니다. 👋
 
 제가 도와드릴 수 있는 기능은 다음과 같습니다:
 
@@ -249,12 +228,13 @@ class OfficeAutomationGraph:
 배송 정보를 입력하면 운송장 PDF를 자동으로 생성해드립니다.
 
 필요한 정보:
-- 수령인 이름
-- 전화번호 (010-XXXX-XXXX 형식)
-- 배송 주소 (상세주소 포함)
+- 하차지 (회사 이름)
+- 주소 (상세주소 포함)
+- 연락처 (010-XXXX-XXXX 형식)
+- 지불방법 (착불 또는 선불)
 
 **입력 예시:**
-`홍길동 010-1234-5678 서울시 강남구 테헤란로 123`
+`(주)삼성전자 서울시 강남구 테헤란로 123 010-1234-5678 착불 35000원`
 
 ---
 
@@ -292,132 +272,36 @@ class OfficeAutomationGraph:
 
 궁금하신 점이 있으시면 언제든지 물어보세요! 😊"""
 
-            return {
-                "status": "help",
-                "messages": [{"role": "assistant", "content": help_message}]
-            }
+        return {
+            "messages": [AIMessage(content=help_message)]
+        }
 
-        elif intent.scenario == "delivery":
-            print(f"[📦] Parsing delivery info...")
-            parsed_info, is_valid, error_msg = self.delivery_parser.parse_with_validation(raw_input)
-            scenario = "delivery"
+    # ========================================================================
+    # 외부 인터페이스
+    # ========================================================================
 
-            if is_valid:
-                formatted_info = f"""**운송장 정보:**
+    def invoke(
+        self,
+        raw_input: str,
+        input_type: str = "text",
+        discord_user_id: Optional[str] = None,
+        discord_channel_id: Optional[str] = None,
+        thread_id: str = "default",
+    ) -> Dict[str, Any]:
+        """
+        워크플로우 실행
 
-【하차지 정보】
-- 하차지: {parsed_info.unloading_site}
-- 주소: {parsed_info.address}
-- 연락처: {parsed_info.contact}
+        Args:
+            raw_input: 입력 텍스트 (원본 또는 음성 변환)
+            input_type: 입력 타입 ("text" 또는 "voice")
+            discord_user_id: 디스코드 사용자 ID
+            discord_channel_id: 디스코드 채널 ID
+            thread_id: 스레드 ID (대화 세션 식별)
 
-【상차지 정보】
-- 상차지: {parsed_info.loading_site}"""
-                if parsed_info.loading_address:
-                    formatted_info += f"\n- 상차지 주소: {parsed_info.loading_address}"
-                if parsed_info.loading_phone:
-                    formatted_info += f"\n- 상차지 전화번호: {parsed_info.loading_phone}"
-
-                formatted_info += f"\n\n【운송비】\n- 지불방법: {parsed_info.payment_type}"
-                if parsed_info.freight_cost:
-                    formatted_info += f"\n- 운송비: {parsed_info.freight_cost:,}원"
-
-                if parsed_info.notes:
-                    formatted_info += f"\n\n- 비고: {parsed_info.notes}"
-                if parsed_info.confidence:
-                    formatted_info += f"\n\n신뢰도: {parsed_info.confidence * 100:.0f}%"
-
-        elif intent.scenario == "product_order":
-            print(f"[🏭] Parsing product order info...")
-            parsed_info, is_valid, error_msg = self.product_parser.parse_with_validation(raw_input)
-            scenario = "product_order"
-
-            if is_valid:
-                total_price = parsed_info.quantity * parsed_info.unit_price
-                formatted_info = f"""**거래명세서 정보:**
-- 거래처: {parsed_info.client}
-- 품목: {parsed_info.product_name}
-- 수량: {parsed_info.quantity}개
-- 단가: {parsed_info.unit_price:,}원
-- 합계: {total_price:,}원
-"""
-                if parsed_info.notes:
-                    formatted_info += f"- 참고: {parsed_info.notes}\n"
-                if parsed_info.confidence:
-                    formatted_info += f"\n신뢰도: {parsed_info.confidence * 100:.0f}%"
-
-        elif intent.scenario == "aluminum_calculation":
-            print(f"[🔧] Aluminum calculation scenario detected")
-            # 알루미늄 계산은 승인 프로세스 없이 바로 Agent에게 전달
-            config = {
-                "configurable": {"thread_id": thread_id},
-                "metadata": {
-                    "langfuse_session_id": thread_id,
-                    "langfuse_user_id": discord_user_id or "unknown",
-                    "langfuse_tags": ["office-automation", input_type, "aluminum-calculation"],
-                }
-            }
-
-            user_message = f"""시나리오: aluminum_calculation (알루미늄 계산)
-
-사용자 입력: {raw_input}
-
-**지시사항:**
-사용자가 요청한 알루미늄 제품의 단가를 계산하세요.
-적절한 계산 도구를 선택하여 즉시 계산 결과를 반환하세요.
-
-사용 가능한 도구:
-- calculate_aluminum_price_square_pipe: 사각파이프 (폭, 높이, 두께, 길이)
-- calculate_aluminum_price_round_pipe: 원파이프 (외경, 두께, 길이)
-- calculate_aluminum_price_angle: 앵글 (폭A, 폭B, 두께, 길이)
-- calculate_aluminum_price_flat_bar: 평철 (폭, 두께, 길이)
-- calculate_aluminum_price_round_bar: 환봉 (지름, 길이)
-- calculate_aluminum_price_channel: 찬넬 (높이, 폭, 두께, 길이)
-- calculate_price_from_weight_and_price_per_kg: 중량과 kg당 가격으로 개당 가격 계산
-- calculate_price_per_kg_from_unit_price_and_weight: 제품 단가와 중량으로 kg당 가격 계산
-
-계산 결과를 그대로 사용자에게 전달하세요."""
-
-            print(f"[📤] Invoking agent with aluminum calculation...")
-            result = self.agent.invoke(
-                {"messages": [{"role": "user", "content": user_message}]},
-                config
-            )
-            return result
-
-        else:
-            return {
-                "status": "error",
-                "error": f"알 수 없는 시나리오: {intent.scenario}",
-                "messages": [{"role": "assistant", "content": f"❌ 시나리오 분류 실패: {intent.scenario}"}]
-            }
-
-        # 파싱 실패 처리 - 재요청
-        if not is_valid:
-            if scenario == "delivery":
-                retry_message = f"""❌ 필수 정보가 누락되었습니다: {error_msg}
-
-다음 정보를 모두 포함하여 다시 입력해주세요:
-- 이름 (수령인)
-- 전화번호 (010-XXXX-XXXX 형식)
-- 주소 (상세주소 포함)
-
-**예시:** 홍길동 010-1234-5678 서울시 강남구 테헤란로 123"""
-            else:  # product_order
-                retry_message = f"""❌ 필수 정보가 누락되었습니다: {error_msg}
-
-다음 정보를 모두 포함하여 다시 입력해주세요:
-- 거래처 (예: (주)삼성전자)
-- 품목 (제품명)
-- 수량 (숫자)
-- 단가 (원 단위)
-
-**예시:** 거래처 (주)삼성전자, 알루미늄 원파이프, 6개, 개당 50000원"""
-
-            return {
-                "status": "retry",
-                "error": error_msg,
-                "messages": [{"role": "assistant", "content": retry_message}]
-            }
+        Returns:
+            Graph 실행 결과
+        """
+        print(f"[📤] Invoking graph with thread_id={thread_id}...")
 
         # Langfuse CallbackHandler 생성
         callbacks = []
@@ -438,32 +322,18 @@ class OfficeAutomationGraph:
             }
         }
 
-        # 3단계: Agent에게 시나리오별 승인 요청 및 문서 생성 지시
-        if scenario == "delivery":
-            user_message = f"""시나리오: delivery (운송장)
+        initial_state = {
+            "raw_input": raw_input,
+            "input_type": input_type,
+            "messages": [HumanMessage(content=raw_input)],
+            "discord_user_id": discord_user_id,
+            "discord_channel_id": discord_channel_id,
+            "thread_id": thread_id,
+            "awaiting_approval": False,
+        }
 
-다음 정보를 파싱했습니다:
-{formatted_info}
-
-**지시사항:**
-먼저 `request_approval_delivery` tool을 호출하여 승인을 요청하세요.
-승인 후 즉시 `generate_delivery_document` tool을 호출하세요 (하차지={parsed_info.unloading_site}, 주소={parsed_info.address}, 연락처={parsed_info.contact}, 지불방법={parsed_info.payment_type}, 비고={parsed_info.notes})"""
-        else:  # product_order
-            user_message = f"""시나리오: product_order (거래명세서)
-
-다음 정보를 파싱했습니다:
-{formatted_info}
-
-**지시사항:**
-먼저 `request_approval_product` tool을 호출하여 승인을 요청하세요.
-승인 후 즉시 `generate_product_document` tool을 호출하세요 (거래처={parsed_info.client}, 품목={parsed_info.product_name}, 수량={parsed_info.quantity}, 단가={parsed_info.unit_price})"""
-
-        print(f"[📤] Invoking agent with scenario: {scenario}...")
-        result = self.agent.invoke(
-            {"messages": [{"role": "user", "content": user_message}]},
-            config
-        )
-
+        result = self.graph.invoke(initial_state, config)
+        print(f"[✅] Graph execution completed")
         return result
 
     def get_state(self, thread_id: str = "default") -> Optional[Dict[str, Any]]:
@@ -478,8 +348,8 @@ class OfficeAutomationGraph:
         """
         config = {"configurable": {"thread_id": thread_id}}
         try:
-            state = self.agent.get_state(config)
-            return state.values if state else None
+            state = self.graph.get_state(config)
+            return state
         except Exception as e:
             print(f"[⚠️] Failed to get state: {e}")
             return None
@@ -493,40 +363,36 @@ class OfficeAutomationGraph:
         """
         HITL 승인/거절 후 워크플로우 재개
 
-        편집은 bot.py에서 직접 문서 생성하므로 여기서는 approve/reject만 처리
-
         Args:
             decision_type: "approve" 또는 "reject"
             reject_message: reject인 경우 거절 메시지
             thread_id: 스레드 ID
 
         Returns:
-            Agent 실행 결과
+            Graph 실행 결과
         """
-        from langgraph.types import Command
-
         config = {"configurable": {"thread_id": thread_id}}
 
-        if decision_type == "approve":
-            print(f"[✅] Resuming with approval...", flush=True)
-            resume_data = Command(
-                resume={"decisions": [{"type": "approve"}]}
-            )
-        elif decision_type == "reject":
-            print(f"[❌] Resuming with rejection: {reject_message}", flush=True)
-            resume_data = Command(
-                resume={
-                    "decisions": [{
-                        "type": "reject",
-                        "message": reject_message or "사용자가 거절했습니다."
-                    }]
-                }
-            )
-        else:
-            raise ValueError(f"Invalid decision_type: {decision_type}. Only 'approve' or 'reject' allowed.")
+        print(f"[🔄] Resuming graph with decision={decision_type}, thread_id={thread_id}...")
 
-        # Agent 재개
-        print(f"[🚀] Invoking agent with resume...", flush=True)
-        result = self.agent.invoke(resume_data, config)
-        print(f"[✅] Agent completed", flush=True)
+        # 현재 상태 가져오기
+        state = self.graph.get_state(config)
+        if not state:
+            print(f"[❌] No state found for thread_id={thread_id}")
+            return {"error": "No state found"}
+
+        # 상태 업데이트
+        updated_values = {
+            **state.values,
+            "approval_decision": decision_type,
+            "awaiting_approval": False
+        }
+
+        if decision_type == "reject":
+            updated_values["reject_message"] = reject_message or "사용자가 거절했습니다."
+
+        # 그래프 재개 (업데이트된 상태로 invoke)
+        print(f"[🚀] Invoking graph with updated state...")
+        result = self.graph.invoke(updated_values, config)
+        print(f"[✅] Graph resume completed")
         return result

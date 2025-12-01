@@ -26,14 +26,16 @@ class OfficeAutomationState(TypedDict):
     scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation", "help"]]  # 시나리오
     confidence: Optional[float]  # 분류 신뢰도
 
-    # 파싱 결과
-    parsed_info: Optional[Union["DeliveryInfo", "ProductOrderInfo"]]  # 파싱된 정보
-    is_valid: Optional[bool]  # 파싱 유효성
-    error_message: Optional[str]  # 에러 메시지
+    # 파싱 결과 (시나리오별로 다른 타입)
+    delivery_info: Optional["DeliveryInfo"]  # 운송장 정보
+    product_order_info: Optional["ProductOrderInfo"]  # 제품 주문 정보
+    parsing_error: Optional[str]  # 파싱 에러 메시지
 
-    # HITL 상태
+    # HITL 상태 (Human-in-the-Loop)
     awaiting_approval: bool  # 승인 대기 중
-    approval_status: Optional[Literal["approved", "rejected", "edited"]]  # 승인 상태
+    approval_decision: Optional[Literal["approve", "reject"]]  # 승인 결정 (approve/reject)
+    approval_message: Optional[str]  # 사용자에게 보여줄 승인 요청 메시지
+    reject_message: Optional[str]  # 거절 시 사용자 메시지
 
     # 문서 생성 결과
     docx_path: Optional[str]  # DOCX 파일 경로

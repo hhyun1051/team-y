@@ -462,7 +462,62 @@ async def handle_text_message(message: discord.Message):
 
         print(f"[🔍] Result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
 
-        # Interrupt 발생 체크 (HumanInTheLoopMiddleware)
+        # Interrupt 발생 체크 (StateGraph interrupt_before)
+        # StateGraph에서는 state.next가 None이 아니면 interrupt 발생
+        config = {"configurable": {"thread_id": thread_id}}
+        state = workflow_graph.get_state(thread_id=thread_id)
+
+        if state and state.next and "approval" in str(state.next):
+            # Interrupt 발생 - approval 노드 전에 중단됨
+            print(f"[⏸️] Interrupt detected: next={state.next}")
+
+            # 승인 메시지 가져오기 (state.values에서)
+            approval_msg = state.values.get("approval_message", "승인이 필요합니다")
+
+            # 원래 데이터 추출 (delivery_info 또는 product_order_info)
+            original_data = {}
+
+            # Delivery 정보
+            if state.values.get("delivery_info"):
+                info = state.values["delivery_info"]
+                original_data = {
+                    "unloading_site": info.unloading_site,
+                    "address": info.address,
+                    "contact": info.contact,
+                    "loading_site": info.loading_site,
+                    "loading_address": info.loading_address,
+                    "loading_phone": info.loading_phone,
+                    "payment_type": info.payment_type,
+                    "freight_cost": info.freight_cost,
+                    "notes": info.notes,
+                    "scenario": "delivery"
+                }
+            # Product 정보
+            elif state.values.get("product_order_info"):
+                info = state.values["product_order_info"]
+                original_data = {
+                    "client": info.client,
+                    "product_name": info.product_name,
+                    "quantity": info.quantity,
+                    "unit_price": info.unit_price,
+                    "notes": info.notes,
+                    "scenario": "product_order"
+                }
+
+            # 승인 버튼 UI 생성
+            view = ApprovalView(thread_id=thread_id, original_data=original_data)
+            active_sessions[thread_id] = True
+
+            try:
+                await message.channel.send(approval_msg, view=view)
+                print(f"[✅] Approval request sent")
+            except Exception as e:
+                print(f"[❌] Failed to send approval request: {e}")
+                await message.channel.send(f"❌ 승인 요청 전송 실패: {str(e)}")
+
+            return
+
+        # 이전 방식 (__interrupt__) 지원 (호환성)
         if "__interrupt__" in result:
             interrupts = result["__interrupt__"]
             print(f"[⏸️] Interrupt detected: {len(interrupts)} interrupt(s)")
