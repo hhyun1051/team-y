@@ -25,6 +25,8 @@ class OfficeAutomationState(TypedDict):
     # 분류 결과
     scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation", "help"]]  # 시나리오
     confidence: Optional[float]  # 분류 신뢰도
+    active_scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation"]]  # 진행 중인 시나리오 (멀티턴 유지)
+    active_scenario_timestamp: Optional[float]  # active_scenario 설정 시간 (Unix timestamp)
 
     # 파싱 결과 (시나리오별로 다른 타입)
     delivery_info: Optional["DeliveryInfo"]  # 운송장 정보

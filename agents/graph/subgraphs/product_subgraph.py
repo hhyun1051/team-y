@@ -83,7 +83,7 @@ def create_product_subgraph(checkpointer, product_parser, document_generator):
 
 def _parse_product(state: OfficeAutomationState, parser) -> Dict[str, Any]:
     """
-    거래명세서 정보 파싱 노드
+    거래명세서 정보 파싱 노드 (멀티턴 지원)
 
     Args:
         state: 현재 상태
@@ -93,29 +93,44 @@ def _parse_product(state: OfficeAutomationState, parser) -> Dict[str, Any]:
         업데이트된 상태
     """
     raw_input = state.get("raw_input", "")
+    messages = state.get("messages", [])
+
     print(f"[🏭] Parsing product order info from: {raw_input[:50]}...")
+    print(f"[📝] Message history count: {len(messages)}")
 
     try:
-        parsed_info, is_valid, error_msg = parser.parse_with_validation(raw_input)
+        # 멀티턴 지원: messages 전달
+        parsed_info, is_valid, error_msg = parser.parse_with_validation(raw_input, messages=messages)
 
         if not is_valid:
             print(f"[❌] Parsing failed: {error_msg}")
+            # 멀티턴: active_scenario를 "product_order"로 고정하여 다음 입력도 product_order로 라우팅
+            import time
             return {
                 "parsing_error": error_msg,
-                "product_order_info": None
+                "product_order_info": None,
+                "active_scenario": "product_order",
+                "active_scenario_timestamp": time.time()
             }
 
         print(f"[✅] Product order parsed: {parsed_info.client}, {parsed_info.product_name}")
+        # 파싱 성공: active_scenario 제거 (새로운 시나리오 시작 가능)
         return {
             "product_order_info": parsed_info,
-            "parsing_error": None
+            "parsing_error": None,
+            "active_scenario": None,
+            "active_scenario_timestamp": None
         }
 
     except Exception as e:
         print(f"[❌] Parsing exception: {e}")
+        # 멀티턴: 예외 발생 시에도 active_scenario 고정
+        import time
         return {
             "parsing_error": f"파싱 중 오류 발생: {str(e)}",
-            "product_order_info": None
+            "product_order_info": None,
+            "active_scenario": "product_order",
+            "active_scenario_timestamp": time.time()
         }
 
 
@@ -260,20 +275,9 @@ def _retry_node(state: OfficeAutomationState) -> Dict[str, Any]:
     """
     error_msg = state.get("parsing_error", "알 수 없는 오류")
 
-    retry_message = f"""❌ 필수 정보가 누락되었습니다: {error_msg}
+    retry_message = f"""❌ {error_msg}
 
-다음 정보를 모두 포함하여 다시 입력해주세요:
-- **거래처** (예: (주)삼성전자)
-- **품목** (제품명)
-- **수량** (숫자)
-- **단가** (원 단위)
-
-**예시:**
-`거래처 (주)삼성전자, 알루미늄 원파이프, 10개, 개당 50000원`
-
-또는
-
-`(주)현대자동차 알루미늄 사각파이프 6개 단가 45000원`"""
+누락된 정보만 입력해주세요."""
 
     print(f"[⚠️] Retry node: {error_msg}")
 

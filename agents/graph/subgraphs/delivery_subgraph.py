@@ -83,7 +83,7 @@ def create_delivery_subgraph(checkpointer, delivery_parser, document_generator):
 
 def _parse_delivery(state: OfficeAutomationState, parser) -> Dict[str, Any]:
     """
-    운송장 정보 파싱 노드
+    운송장 정보 파싱 노드 (멀티턴 지원)
 
     Args:
         state: 현재 상태
@@ -93,29 +93,44 @@ def _parse_delivery(state: OfficeAutomationState, parser) -> Dict[str, Any]:
         업데이트된 상태
     """
     raw_input = state.get("raw_input", "")
+    messages = state.get("messages", [])
+
     print(f"[📦] Parsing delivery info from: {raw_input[:50]}...")
+    print(f"[📝] Message history count: {len(messages)}")
 
     try:
-        parsed_info, is_valid, error_msg = parser.parse_with_validation(raw_input)
+        # 멀티턴 지원: messages 전달
+        parsed_info, is_valid, error_msg = parser.parse_with_validation(raw_input, messages=messages)
 
         if not is_valid:
             print(f"[❌] Parsing failed: {error_msg}")
+            # 멀티턴: active_scenario를 "delivery"로 고정하여 다음 입력도 delivery로 라우팅
+            import time
             return {
                 "parsing_error": error_msg,
-                "delivery_info": None
+                "delivery_info": None,
+                "active_scenario": "delivery",
+                "active_scenario_timestamp": time.time()
             }
 
         print(f"[✅] Delivery info parsed: {parsed_info.unloading_site}, {parsed_info.contact}")
+        # 파싱 성공: active_scenario 제거 (새로운 시나리오 시작 가능)
         return {
             "delivery_info": parsed_info,
-            "parsing_error": None
+            "parsing_error": None,
+            "active_scenario": None,
+            "active_scenario_timestamp": None
         }
 
     except Exception as e:
         print(f"[❌] Parsing exception: {e}")
+        # 멀티턴: 예외 발생 시에도 active_scenario 고정
+        import time
         return {
             "parsing_error": f"파싱 중 오류 발생: {str(e)}",
-            "delivery_info": None
+            "delivery_info": None,
+            "active_scenario": "delivery",
+            "active_scenario_timestamp": time.time()
         }
 
 
@@ -275,20 +290,9 @@ def _retry_node(state: OfficeAutomationState) -> Dict[str, Any]:
     """
     error_msg = state.get("parsing_error", "알 수 없는 오류")
 
-    retry_message = f"""❌ 필수 정보가 누락되었습니다: {error_msg}
+    retry_message = f"""❌ {error_msg}
 
-다음 정보를 모두 포함하여 다시 입력해주세요:
-- **하차지** (회사 이름)
-- **주소** (상세주소 포함)
-- **연락처** (010-XXXX-XXXX 형식)
-- **지불방법** (착불 또는 선불)
-
-**예시:**
-`(주)삼성전자 서울시 강남구 테헤란로 123 010-1234-5678 착불 35000원`
-
-또는
-
-`(주)현대자동차 경기도 화성시 동탄대로 123 010-9876-5432 선불`"""
+누락된 정보만 입력해주세요."""
 
     print(f"[⚠️] Retry node: {error_msg}")
 

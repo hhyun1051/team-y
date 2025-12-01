@@ -127,6 +127,11 @@ class ApprovalView(discord.ui.View):
             message_content = ""
             pdf_path = None
 
+            # PDF 경로를 result에서 직접 가져오기 (더 신뢰성 있음)
+            if "pdf_path" in result and result["pdf_path"]:
+                pdf_path = Path(result["pdf_path"])
+                print(f"[📄] Found PDF path in result: {pdf_path}")
+
             if "messages" in result and result["messages"]:
                 latest_msg = result["messages"][-1]
                 # 메시지가 dict 또는 object일 수 있음
@@ -136,12 +141,6 @@ class ApprovalView(discord.ui.View):
                     message_content = getattr(latest_msg, "content", "")
 
                 if message_content:
-                    # PDF 경로 추출 (정규식으로 "- PDF: /tmp/..." 패턴 찾기)
-                    pdf_match = re.search(r'- PDF:\s*(/tmp/[^\s]+\.pdf)', message_content)
-                    if pdf_match:
-                        pdf_path = Path(pdf_match.group(1))
-                        print(f"[📄] Found PDF path: {pdf_path}")
-
                     await interaction.channel.send(message_content)
                 else:
                     await interaction.channel.send("✅ 처리 완료")
@@ -154,6 +153,8 @@ class ApprovalView(discord.ui.View):
                 await interaction.channel.send(file=discord.File(str(pdf_path)))
             elif pdf_path:
                 print(f"[⚠️] PDF file not found: {pdf_path}")
+            else:
+                print(f"[⚠️] No PDF path found in result")
 
         except Exception as e:
             await interaction.channel.send(f"❌ 재개 실패: {str(e)}")
@@ -434,14 +435,52 @@ async def handle_text_message(message: discord.Message):
         await message.channel.send("⏸️ 승인 대기 중입니다. 위의 버튼을 사용해주세요.")
         return
 
-    # 새 세션 ID 생성 (타임스탬프 기반)
+    # 세션 재사용 로직: 기존 세션이 있고 완료되지 않았으면 재사용
     import time
-    thread_id = f"{user_channel_key}_{int(time.time())}"
 
-    # 세션 매핑 업데이트
-    user_sessions[user_channel_key] = thread_id
+    # 세션 타임아웃 설정 (5분 = 300초)
+    SESSION_TIMEOUT = 300
 
-    print(f"[🆕] New session created: {thread_id}")
+    if current_thread_id:
+        # 기존 세션의 상태 확인
+        try:
+            state = workflow_graph.get_state(thread_id=current_thread_id)
+            # 멀티턴 대화 체크: active_scenario가 있으면 진행 중
+            active_scenario = state.values.get("active_scenario") if state else None
+            active_scenario_timestamp = state.values.get("active_scenario_timestamp", 0) if state else 0
+
+            # 세션 타임아웃 체크
+            if active_scenario and active_scenario_timestamp:
+                session_age = time.time() - active_scenario_timestamp
+                if session_age > SESSION_TIMEOUT:
+                    print(f"[⏰] Session expired (age: {session_age:.0f}s), creating new session")
+                    thread_id = f"{user_channel_key}_{int(time.time())}"
+                    user_sessions[user_channel_key] = thread_id
+                    print(f"[🆕] New session created: {thread_id}")
+                else:
+                    # 타임아웃 전 → 세션 재사용
+                    thread_id = current_thread_id
+                    print(f"[🔄] Reusing active session (multi-turn): {thread_id}, active_scenario={active_scenario}, age={session_age:.0f}s")
+            # state.next가 비어있고 active_scenario도 없으면 완료된 세션
+            elif state and not state.next and not active_scenario:
+                print(f"[✅] Previous session completed, creating new session")
+                thread_id = f"{user_channel_key}_{int(time.time())}"
+                user_sessions[user_channel_key] = thread_id
+                print(f"[🆕] New session created: {thread_id}")
+            else:
+                # 진행 중인 세션 → 재사용 (멀티턴 대화)
+                thread_id = current_thread_id
+                print(f"[🔄] Reusing active session: {thread_id}")
+        except Exception as e:
+            print(f"[⚠️] Failed to get session state: {e}, creating new session")
+            thread_id = f"{user_channel_key}_{int(time.time())}"
+            user_sessions[user_channel_key] = thread_id
+            print(f"[🆕] New session created: {thread_id}")
+    else:
+        # 첫 메시지 → 새 세션
+        thread_id = f"{user_channel_key}_{int(time.time())}"
+        user_sessions[user_channel_key] = thread_id
+        print(f"[🆕] New session created: {thread_id}")
 
     # 처리 중 메시지
     processing_msg = await message.channel.send("🤖 텍스트를 처리 중입니다...")
@@ -467,19 +506,37 @@ async def handle_text_message(message: discord.Message):
         config = {"configurable": {"thread_id": thread_id}}
         state = workflow_graph.get_state(thread_id=thread_id)
 
-        if state and state.next and "approval" in str(state.next):
-            # Interrupt 발생 - approval 노드 전에 중단됨
+        # Subgraph interrupt 체크
+        if state and state.next and ("delivery_subgraph" in str(state.next) or "product_subgraph" in str(state.next)):
+            # Interrupt 발생 - subgraph 내부에서 approval 노드 전에 중단됨
             print(f"[⏸️] Interrupt detected: next={state.next}")
 
-            # 승인 메시지 가져오기 (state.values에서)
-            approval_msg = state.values.get("approval_message", "승인이 필요합니다")
+            # Subgraph state 접근 (state.tasks를 통해)
+            subgraph_state_values = None
+            if state.tasks and len(state.tasks) > 0:
+                task = state.tasks[0]
+                if task.state:
+                    try:
+                        # Subgraph의 state를 가져옴
+                        subgraph_state = workflow_graph.graph.get_state(task.state)
+                        if subgraph_state and subgraph_state.values:
+                            subgraph_state_values = subgraph_state.values
+                            print(f"[✅] Subgraph state accessed: {list(subgraph_state_values.keys())}")
+                    except Exception as e:
+                        print(f"[⚠️] Failed to get subgraph state: {e}")
+
+            # 승인 메시지 가져오기 (subgraph state에서)
+            if subgraph_state_values:
+                approval_msg = subgraph_state_values.get("approval_message", "승인이 필요합니다")
+            else:
+                approval_msg = "승인이 필요합니다"
 
             # 원래 데이터 추출 (delivery_info 또는 product_order_info)
             original_data = {}
 
-            # Delivery 정보
-            if state.values.get("delivery_info"):
-                info = state.values["delivery_info"]
+            # Delivery 정보 (subgraph state에서)
+            if subgraph_state_values and subgraph_state_values.get("delivery_info"):
+                info = subgraph_state_values["delivery_info"]
                 original_data = {
                     "unloading_site": info.unloading_site,
                     "address": info.address,
@@ -492,9 +549,9 @@ async def handle_text_message(message: discord.Message):
                     "notes": info.notes,
                     "scenario": "delivery"
                 }
-            # Product 정보
-            elif state.values.get("product_order_info"):
-                info = state.values["product_order_info"]
+            # Product 정보 (subgraph state에서)
+            elif subgraph_state_values and subgraph_state_values.get("product_order_info"):
+                info = subgraph_state_values["product_order_info"]
                 original_data = {
                     "client": info.client,
                     "product_name": info.product_name,
@@ -509,6 +566,8 @@ async def handle_text_message(message: discord.Message):
             active_sessions[thread_id] = True
 
             try:
+                # Delete processing message and send approval UI
+                await processing_msg.delete()
                 await message.channel.send(approval_msg, view=view)
                 print(f"[✅] Approval request sent")
             except Exception as e:

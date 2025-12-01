@@ -7,7 +7,7 @@ Scenario-specific parsers for Office Automation
 - AluminumCalculationParser: 알루미늄 단가 계산 정보 파싱
 """
 
-from typing import Tuple
+from typing import Tuple, Optional
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 
@@ -88,18 +88,39 @@ class DeliveryParser:
 
         return result["structured_response"]
 
-    def parse_with_validation(self, text: str) -> Tuple[DeliveryInfo, bool, str]:
+    def parse_with_validation(self, text: str, messages: Optional[list] = None) -> Tuple[DeliveryInfo, bool, str]:
         """
-        파싱 + 검증
+        파싱 + 검증 (멀티턴 지원)
 
         Args:
-            text: 파싱할 텍스트
+            text: 현재 입력 텍스트
+            messages: 전체 메시지 히스토리 (멀티턴 대화용)
 
         Returns:
             (DeliveryInfo, is_valid, error_message)
         """
         try:
-            delivery_info = self.parse(text)
+            # 멀티턴 대화: 전체 메시지에서 HumanMessage만 추출하여 결합
+            if messages:
+                from langchain_core.messages import HumanMessage
+
+                human_inputs = []
+                for msg in messages:
+                    if isinstance(msg, HumanMessage):
+                        human_inputs.append(msg.content)
+
+                # 모든 사용자 입력을 결합하여 파싱
+                if human_inputs:
+                    combined_text = " ".join(human_inputs)
+                    print(f"[🔄] Multi-turn parsing: combining {len(human_inputs)} human messages")
+                    print(f"[📝] Combined text: {combined_text}")
+                    delivery_info = self.parse(combined_text)
+                else:
+                    # HumanMessage가 없으면 현재 텍스트만 파싱
+                    delivery_info = self.parse(text)
+            else:
+                # messages가 없으면 현재 텍스트만 파싱 (단일턴)
+                delivery_info = self.parse(text)
 
             # 필수 필드 검증 (하차지 정보)
             if not delivery_info.unloading_site:
@@ -189,18 +210,39 @@ class ProductOrderParser:
 
         return result["structured_response"]
 
-    def parse_with_validation(self, text: str) -> Tuple[ProductOrderInfo, bool, str]:
+    def parse_with_validation(self, text: str, messages: Optional[list] = None) -> Tuple[ProductOrderInfo, bool, str]:
         """
-        파싱 + 검증
+        파싱 + 검증 (멀티턴 지원)
 
         Args:
-            text: 파싱할 텍스트
+            text: 현재 입력 텍스트
+            messages: 전체 메시지 히스토리 (멀티턴 대화용)
 
         Returns:
             (ProductOrderInfo, is_valid, error_message)
         """
         try:
-            order_info = self.parse(text)
+            # 멀티턴 대화: 전체 메시지에서 HumanMessage만 추출하여 결합
+            if messages:
+                from langchain_core.messages import HumanMessage
+
+                human_inputs = []
+                for msg in messages:
+                    if isinstance(msg, HumanMessage):
+                        human_inputs.append(msg.content)
+
+                # 모든 사용자 입력을 결합하여 파싱
+                if human_inputs:
+                    combined_text = " ".join(human_inputs)
+                    print(f"[🔄] Multi-turn parsing: combining {len(human_inputs)} human messages")
+                    print(f"[📝] Combined text: {combined_text}")
+                    order_info = self.parse(combined_text)
+                else:
+                    # HumanMessage가 없으면 현재 텍스트만 파싱
+                    order_info = self.parse(text)
+            else:
+                # messages가 없으면 현재 텍스트만 파싱 (단일턴)
+                order_info = self.parse(text)
 
             # 필수 필드 검증
             if not order_info.client:

@@ -175,7 +175,9 @@ class OfficeAutomationGraph:
 
     def _classify_intent_node(self, state: OfficeAutomationState) -> Dict[str, Any]:
         """
-        의도 분류 노드
+        의도 분류 노드 (멀티턴 지원)
+
+        active_scenario가 있으면 재분류하지 않고 해당 시나리오 유지
 
         Args:
             state: 현재 상태
@@ -183,6 +185,16 @@ class OfficeAutomationGraph:
         Returns:
             업데이트된 상태 (scenario, confidence)
         """
+        # 멀티턴 대화: active_scenario가 있으면 그대로 유지
+        active_scenario = state.get("active_scenario")
+        if active_scenario:
+            print(f"[🔒] Active scenario locked: {active_scenario} (multi-turn mode)")
+            return {
+                "scenario": active_scenario,
+                "confidence": 1.0  # Active scenario는 100% 신뢰도
+            }
+
+        # active_scenario가 없으면 새로운 의도 분류
         raw_input = state.get("raw_input", "")
         print(f"[🔍] Classifying intent: {raw_input[:50]}...")
 
@@ -381,18 +393,40 @@ class OfficeAutomationGraph:
             print(f"[❌] No state found for thread_id={thread_id}")
             return {"error": "No state found"}
 
-        # 상태 업데이트
-        updated_values = {
-            **state.values,
-            "approval_decision": decision_type,
-            "awaiting_approval": False
-        }
+        # Subgraph interrupt인 경우: subgraph state 업데이트
+        if state.tasks and len(state.tasks) > 0:
+            task = state.tasks[0]
+            print(f"[🔍] Found interrupted task: {task.name}")
 
-        if decision_type == "reject":
-            updated_values["reject_message"] = reject_message or "사용자가 거절했습니다."
+            # Subgraph의 state 업데이트
+            update_values = {
+                "approval_decision": decision_type,
+                "awaiting_approval": False
+            }
 
-        # 그래프 재개 (업데이트된 상태로 invoke)
-        print(f"[🚀] Invoking graph with updated state...")
-        result = self.graph.invoke(updated_values, config)
+            if decision_type == "reject":
+                update_values["reject_message"] = reject_message or "사용자가 거절했습니다."
+
+            # update_state를 사용하여 subgraph state 업데이트
+            print(f"[🔧] Updating subgraph state: {update_values}")
+            self.graph.update_state(task.state, update_values)
+
+            # 그래프 재개 (invoke 없이, 단순히 None으로 재개)
+            print(f"[🚀] Invoking graph to resume from interrupt...")
+            result = self.graph.invoke(None, config)
+        else:
+            # Main graph interrupt (이 경우는 없어야 함)
+            print(f"[⚠️] No tasks found - updating main graph state")
+            updated_values = {
+                "approval_decision": decision_type,
+                "awaiting_approval": False
+            }
+
+            if decision_type == "reject":
+                updated_values["reject_message"] = reject_message or "사용자가 거절했습니다."
+
+            self.graph.update_state(config, updated_values)
+            result = self.graph.invoke(None, config)
+
         print(f"[✅] Graph resume completed")
         return result
