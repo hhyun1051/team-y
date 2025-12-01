@@ -28,6 +28,16 @@ from .utils.tools import (
     generate_delivery_document,
     generate_product_document,
 )
+from .utils.tools.aluminum_calculator import (
+    calculate_aluminum_price_square_pipe,
+    calculate_aluminum_price_round_pipe,
+    calculate_aluminum_price_angle,
+    calculate_aluminum_price_flat_bar,
+    calculate_aluminum_price_round_bar,
+    calculate_aluminum_price_channel,
+    calculate_price_from_weight_and_price_per_kg,
+    calculate_price_per_kg_from_unit_price_and_weight,
+)
 from ..middleware import LangfuseToolLoggingMiddleware
 
 
@@ -93,11 +103,11 @@ class OfficeAutomationGraph:
         # System prompt
         system_prompt = """당신은 사무 자동화 전문가입니다.
 
-사용자가 입력한 텍스트에서 정보를 추출하고, 사용자 승인을 받은 후 자동으로 문서를 생성합니다.
+사용자가 입력한 텍스트에서 정보를 추출하고, 사용자 승인을 받은 후 자동으로 문서를 생성하거나 계산을 수행합니다.
 
 **워크플로우:**
 
-1. **정보 승인 요청 (첫 번째 단계)**
+1. **정보 승인 요청 (첫 번째 단계 - 문서 생성 시나리오만 해당)**
    - 사용자가 지시한 대로 정확히 `request_approval_delivery` 또는 `request_approval_product` tool을 호출하세요
    - tool 호출 시 parsed_info 파라미터에 포맷팅된 정보를 전달하세요
    - tool 호출 후 "승인을 기다립니다"라고만 응답하세요
@@ -111,11 +121,25 @@ class OfficeAutomationGraph:
    - Tool이 반환한 텍스트를 재작성하거나 요약하지 마세요
    - "승인을 기다립니다"라는 메시지는 절대 반복하지 마세요
 
+3. **알루미늄 계산 (즉시 실행)**
+   - 알루미늄 제품 단가 계산 요청 시 적절한 계산 tool을 즉시 호출하세요
+   - 승인 프로세스 없이 바로 계산 결과를 반환합니다
+   - 사용 가능한 계산 tools:
+     * calculate_aluminum_price_square_pipe: 사각파이프
+     * calculate_aluminum_price_round_pipe: 원파이프
+     * calculate_aluminum_price_angle: 앵글(ㄱ자)
+     * calculate_aluminum_price_flat_bar: 평철
+     * calculate_aluminum_price_round_bar: 환봉
+     * calculate_aluminum_price_channel: 찬넬(C형강)
+     * calculate_price_from_weight_and_price_per_kg: 중량×kg당가격→개당가격
+     * calculate_price_per_kg_from_unit_price_and_weight: 제품단가÷중량→kg당가격
+
 **중요 규칙:**
 - 승인 tool이 "승인되었습니다" 응답을 반환하면, 반드시 문서 생성 tool을 즉시 호출하세요 (필수!)
 - 문서 생성 tool이 반환한 메시지를 **한 글자도 바꾸지 말고** 그대로 사용자에게 전달하세요
 - Tool의 출력 형식(마크다운, 이모지, 줄바꿈 등)을 보존하세요
 - "승인을 기다립니다"는 첫 번째 승인 요청 시에만 사용하고, 승인 완료 후에는 절대 사용하지 마세요
+- 알루미늄 계산은 승인 없이 즉시 실행하세요
 """
 
         # Agent 생성
@@ -126,6 +150,14 @@ class OfficeAutomationGraph:
                 request_approval_product,
                 generate_delivery_document,
                 generate_product_document,
+                calculate_aluminum_price_square_pipe,
+                calculate_aluminum_price_round_pipe,
+                calculate_aluminum_price_angle,
+                calculate_aluminum_price_flat_bar,
+                calculate_aluminum_price_round_bar,
+                calculate_aluminum_price_channel,
+                calculate_price_from_weight_and_price_per_kg,
+                calculate_price_per_kg_from_unit_price_and_weight,
             ],
             system_prompt=system_prompt,
             middleware=middlewares,
@@ -240,11 +272,23 @@ class OfficeAutomationGraph:
 
 ---
 
+**3️⃣ 알루미늄 단가 계산**
+알루미늄 제품의 단가를 자동으로 계산해드립니다.
+
+지원 제품:
+- 사각파이프, 원파이프, 앵글, 평철, 환봉, 찬넬
+
+**입력 예시:**
+- `사각파이프 50x30x2t, 3m`
+- `원파이프 Ø40x2t, 6m`
+- `중량 2.5kg, kg당 6000원`
+
+---
+
 **📌 사용 방법:**
-1. 위 정보를 입력하시면 자동으로 파싱됩니다
-2. 확인 버튼(승인/거절/편집)이 표시됩니다
-3. 승인하시면 문서가 생성됩니다
-4. 생성된 PDF 파일을 받으실 수 있습니다
+1. 위 정보를 입력하시면 자동으로 처리됩니다
+2. 문서 생성은 확인 버튼(승인/거절/편집)이 표시됩니다
+3. 알루미늄 계산은 즉시 결과가 표시됩니다
 
 궁금하신 점이 있으시면 언제든지 물어보세요! 😊"""
 
@@ -278,7 +322,7 @@ class OfficeAutomationGraph:
                     formatted_info += f"\n- 운송비: {parsed_info.freight_cost:,}원"
 
                 if parsed_info.notes:
-                    formatted_info += f"\n\n- 참고: {parsed_info.notes}"
+                    formatted_info += f"\n\n- 비고: {parsed_info.notes}"
                 if parsed_info.confidence:
                     formatted_info += f"\n\n신뢰도: {parsed_info.confidence * 100:.0f}%"
 
@@ -300,6 +344,45 @@ class OfficeAutomationGraph:
                     formatted_info += f"- 참고: {parsed_info.notes}\n"
                 if parsed_info.confidence:
                     formatted_info += f"\n신뢰도: {parsed_info.confidence * 100:.0f}%"
+
+        elif intent.scenario == "aluminum_calculation":
+            print(f"[🔧] Aluminum calculation scenario detected")
+            # 알루미늄 계산은 승인 프로세스 없이 바로 Agent에게 전달
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "metadata": {
+                    "langfuse_session_id": thread_id,
+                    "langfuse_user_id": discord_user_id or "unknown",
+                    "langfuse_tags": ["office-automation", input_type, "aluminum-calculation"],
+                }
+            }
+
+            user_message = f"""시나리오: aluminum_calculation (알루미늄 계산)
+
+사용자 입력: {raw_input}
+
+**지시사항:**
+사용자가 요청한 알루미늄 제품의 단가를 계산하세요.
+적절한 계산 도구를 선택하여 즉시 계산 결과를 반환하세요.
+
+사용 가능한 도구:
+- calculate_aluminum_price_square_pipe: 사각파이프 (폭, 높이, 두께, 길이)
+- calculate_aluminum_price_round_pipe: 원파이프 (외경, 두께, 길이)
+- calculate_aluminum_price_angle: 앵글 (폭A, 폭B, 두께, 길이)
+- calculate_aluminum_price_flat_bar: 평철 (폭, 두께, 길이)
+- calculate_aluminum_price_round_bar: 환봉 (지름, 길이)
+- calculate_aluminum_price_channel: 찬넬 (높이, 폭, 두께, 길이)
+- calculate_price_from_weight_and_price_per_kg: 중량과 kg당 가격으로 개당 가격 계산
+- calculate_price_per_kg_from_unit_price_and_weight: 제품 단가와 중량으로 kg당 가격 계산
+
+계산 결과를 그대로 사용자에게 전달하세요."""
+
+            print(f"[📤] Invoking agent with aluminum calculation...")
+            result = self.agent.invoke(
+                {"messages": [{"role": "user", "content": user_message}]},
+                config
+            )
+            return result
 
         else:
             return {
@@ -364,7 +447,7 @@ class OfficeAutomationGraph:
 
 **지시사항:**
 먼저 `request_approval_delivery` tool을 호출하여 승인을 요청하세요.
-승인 후 즉시 `generate_delivery_document` tool을 호출하세요 (하차지={parsed_info.unloading_site}, 주소={parsed_info.address}, 연락처={parsed_info.contact}, 지불방법={parsed_info.payment_type})"""
+승인 후 즉시 `generate_delivery_document` tool을 호출하세요 (하차지={parsed_info.unloading_site}, 주소={parsed_info.address}, 연락처={parsed_info.contact}, 지불방법={parsed_info.payment_type}, 비고={parsed_info.notes})"""
         else:  # product_order
             user_message = f"""시나리오: product_order (거래명세서)
 

@@ -17,7 +17,8 @@ def generate_delivery_document(
     loading_site: str = "유진알루미늄",
     loading_address: str = None,
     loading_phone: str = None,
-    freight_cost: int = None
+    freight_cost: int = None,
+    notes: str = None
 ) -> str:
     """
     승인된 운송장 정보로 DOCX 및 PDF 문서를 생성합니다.
@@ -31,6 +32,7 @@ def generate_delivery_document(
         loading_address: 상차지 주소 (선택)
         loading_phone: 상차지 전화번호 (선택)
         freight_cost: 운송비 (착불일 경우에만, 원 단위)
+        notes: 비고 (선택)
 
     Returns:
         생성된 문서 경로
@@ -44,10 +46,14 @@ def generate_delivery_document(
             loading_site=loading_site,
             loading_address=loading_address,
             loading_phone=loading_phone,
-            freight_cost=freight_cost
+            freight_cost=freight_cost,
+            notes=notes
         )
 
-        freight_info = f"{freight_cost:,}원" if freight_cost else "미정"
+        if payment_type == "착불" and freight_cost:
+            payment_display = f"{payment_type} ({freight_cost:,}원)"
+        else:
+            payment_display = payment_type
 
         return f"""✅ 운송장 생성 완료!
 
@@ -60,7 +66,8 @@ def generate_delivery_document(
 - 주소: {address}
 - 연락처: {contact}
 - 상차지: {loading_site}
-- 운송비: {payment_type} ({freight_info if payment_type == '착불' else '해당없음'})"""
+- 운송비: {payment_display}
+- 비고: {notes if notes else '없음'}"""
     except Exception as e:
         return f"❌ 운송장 생성 실패: {str(e)}"
 

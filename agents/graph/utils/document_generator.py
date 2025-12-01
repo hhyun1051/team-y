@@ -118,7 +118,8 @@ class DocumentGenerator:
         loading_site: str = "유진알루미늄",
         loading_address: str = None,
         loading_phone: str = None,
-        freight_cost: int = None
+        freight_cost: int = None,
+        notes: str = None
     ) -> Dict[str, Path]:
         """
         운송장 문서 생성 (DOCX + PDF)
@@ -132,16 +133,23 @@ class DocumentGenerator:
             loading_address: 상차지 주소 (선택)
             loading_phone: 상차지 전화번호 (선택)
             freight_cost: 운송비 (착불일 경우에만, 원 단위)
+            notes: 비고 (선택)
 
         Returns:
             {"docx": Path, "pdf": Path}
         """
-        template_path = cls.TEMPLATE_DIR / "delivery_template.docx"
+        template_path = cls.TEMPLATE_DIR / "deliver_template_new.docx"
 
         # 고유한 파일명 생성 (타임스탬프)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         docx_path = cls.OUTPUT_DIR / f"delivery_{timestamp}.docx"
         pdf_path = cls.OUTPUT_DIR / f"delivery_{timestamp}.pdf"
+
+        # 운송비 표시: 착불이고 금액이 있으면 금액 표시, 선불/착불(금액없음)이면 빈칸
+        if payment_type == "착불" and freight_cost:
+            freight_display = f"{freight_cost:,}원"
+        else:
+            freight_display = ""
 
         # 템플릿 치환 데이터
         replacements = {
@@ -152,7 +160,8 @@ class DocumentGenerator:
             "{{LOADING_ADDRESS}}": loading_address or "",
             "{{LOADING_PHONE}}": loading_phone or "",
             "{{PAYMENT_TYPE}}": payment_type,
-            "{{FREIGHT_COST}}": f"{freight_cost:,}원" if freight_cost else "미정",
+            "{{FREIGHT_COST}}": freight_display,
+            "{{NOTES}}": notes or "",
             "{{DATE}}": datetime.now().strftime("%Y년 %m월 %d일"),
         }
 

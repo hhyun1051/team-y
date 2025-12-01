@@ -23,7 +23,7 @@ class OfficeAutomationState(TypedDict):
     input_type: Literal["text", "voice"]  # 입력 타입
 
     # 분류 결과
-    scenario: Optional[Literal["delivery", "product_order", "help"]]  # 시나리오
+    scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation", "help"]]  # 시나리오
     confidence: Optional[float]  # 분류 신뢰도
 
     # 파싱 결과
@@ -58,8 +58,8 @@ class OfficeAutomationState(TypedDict):
 
 class IntentClassification(BaseModel):
     """의도 분류 결과"""
-    scenario: Literal["delivery", "product_order", "help"] = Field(
-        description="시나리오 구분: delivery(운송장), product_order(거래명세서), help(도움말)"
+    scenario: Literal["delivery", "product_order", "aluminum_calculation", "help"] = Field(
+        description="시나리오 구분: delivery(운송장), product_order(거래명세서), aluminum_calculation(알루미늄 계산), help(도움말)"
     )
     confidence: float = Field(description="분류 신뢰도 (0.0~1.0)")
     reasoning: Optional[str] = Field(None, description="분류 근거")
@@ -92,5 +92,31 @@ class ProductOrderInfo(BaseModel):
     product_name: str = Field(description="품목")
     quantity: int = Field(description="수량")
     unit_price: int = Field(description="단가 (원 단위)")
+    confidence: Optional[float] = Field(None, description="파싱 신뢰도 (0.0~1.0)")
+    notes: Optional[str] = Field(None, description="추가 메모")
+
+
+class AluminumCalculationInfo(BaseModel):
+    """알루미늄 단가 계산 정보"""
+    product_type: Literal["square_pipe", "round_pipe", "angle", "flat_bar", "round_bar", "channel"] = Field(
+        description="제품 형상"
+    )
+    length_m: float = Field(description="길이 (m 단위)")
+    
+    # 형상별 치수
+    width: Optional[float] = Field(None, description="폭 (mm)")
+    height: Optional[float] = Field(None, description="높이 (mm)")
+    thickness: Optional[float] = Field(None, description="두께 (mm)")
+    diameter: Optional[float] = Field(None, description="지름/외경 (mm)")
+    width_a: Optional[float] = Field(None, description="앵글 폭 A (mm)")
+    width_b: Optional[float] = Field(None, description="앵글 폭 B (mm)")
+    channel_height: Optional[float] = Field(None, description="찬넬 웹 높이 (mm)")
+    channel_width: Optional[float] = Field(None, description="찬넬 플랜지 폭 (mm)")
+    
+    # 선택 정보
+    quantity: int = Field(1, description="수량")
+    density: float = Field(2.8, description="비중")
+    price_per_kg: int = Field(6000, description="kg당 단가")
+    
     confidence: Optional[float] = Field(None, description="파싱 신뢰도 (0.0~1.0)")
     notes: Optional[str] = Field(None, description="추가 메모")
