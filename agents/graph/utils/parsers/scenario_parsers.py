@@ -290,7 +290,7 @@ class AluminumCalculationParser:
    - thickness: 두께 (mm)
 
 2. round_pipe (원파이프):
-   - diameter: 외경 (mm)
+   - diameter: 지름 (mm)
    - thickness: 두께 (mm)
 
 3. angle (앵글):
@@ -382,18 +382,39 @@ class AluminumCalculationParser:
 
         return result["structured_response"]
 
-    def parse_with_validation(self, text: str) -> Tuple[AluminumCalculationInfo, bool, str]:
+    def parse_with_validation(self, text: str, messages: Optional[list] = None) -> Tuple[AluminumCalculationInfo, bool, str]:
         """
-        파싱 + 검증
+        파싱 + 검증 (멀티턴 지원)
 
         Args:
-            text: 파싱할 텍스트
+            text: 현재 입력 텍스트
+            messages: 전체 메시지 히스토리 (멀티턴 대화용)
 
         Returns:
             (AluminumCalculationInfo, is_valid, error_message)
         """
         try:
-            calc_info = self.parse(text)
+            # 멀티턴 대화: 전체 메시지에서 HumanMessage만 추출하여 결합
+            if messages:
+                from langchain_core.messages import HumanMessage
+
+                human_inputs = []
+                for msg in messages:
+                    if isinstance(msg, HumanMessage):
+                        human_inputs.append(msg.content)
+
+                # 모든 사용자 입력을 결합하여 파싱
+                if human_inputs:
+                    combined_text = " ".join(human_inputs)
+                    print(f"[🔄] Multi-turn parsing: combining {len(human_inputs)} human messages")
+                    print(f"[📝] Combined text: {combined_text}")
+                    calc_info = self.parse(combined_text)
+                else:
+                    # HumanMessage가 없으면 현재 텍스트만 파싱
+                    calc_info = self.parse(text)
+            else:
+                # messages가 없으면 현재 텍스트만 파싱 (단일턴)
+                calc_info = self.parse(text)
 
             # 필수 필드 검증
             if not calc_info.product_type:
@@ -407,7 +428,7 @@ class AluminumCalculationParser:
                     return calc_info, False, "사각파이프 치수(폭, 높이, 두께)가 누락되었습니다."
             elif calc_info.product_type == "round_pipe":
                 if not calc_info.diameter or not calc_info.thickness:
-                    return calc_info, False, "원파이프 치수(외경, 두께)가 누락되었습니다."
+                    return calc_info, False, "원파이프 치수(지름, 두께)가 누락되었습니다."
             elif calc_info.product_type == "angle":
                 if not calc_info.width_a or not calc_info.width_b or not calc_info.thickness:
                     return calc_info, False, "앵글 치수(폭A, 폭B, 두께)가 누락되었습니다."

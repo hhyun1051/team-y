@@ -347,9 +347,8 @@ async def on_ready():
     """봇이 준비되면 실행"""
     global workflow_graph
 
-    # 워크플로우 그래프 초기화
+    # 워크플로우 그래프 초기화 (model_name은 .env의 OPENAI_MODEL_NAME 사용)
     workflow_graph = OfficeAutomationGraph(
-        model_name=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
         temperature=0.0,
         use_langfuse=True
     )

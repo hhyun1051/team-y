@@ -21,20 +21,9 @@ from langfuse.langchain import CallbackHandler
 # Local imports
 from .state import OfficeAutomationState
 from .utils.intent_classifier import IntentClassifier
-from .utils.parsers import DeliveryParser, ProductOrderParser
+from .utils.parsers import DeliveryParser, ProductOrderParser, AluminumCalculationParser
 from .utils.document_generator import DocumentGenerator
-from .utils.tools.aluminum_calculator import (
-    calculate_aluminum_price_square_pipe,
-    calculate_aluminum_price_round_pipe,
-    calculate_aluminum_price_angle,
-    calculate_aluminum_price_flat_bar,
-    calculate_aluminum_price_round_bar,
-    calculate_aluminum_price_channel,
-    calculate_price_from_weight_and_price_per_kg,
-    calculate_price_per_kg_from_unit_price_and_weight,
-)
 from .subgraphs import create_delivery_subgraph, create_product_subgraph, create_aluminum_subgraph
-from ..middleware import LangfuseToolLoggingMiddleware
 
 
 class OfficeAutomationGraph:
@@ -42,7 +31,7 @@ class OfficeAutomationGraph:
 
     def __init__(
         self,
-        model_name: str = "gpt-4o-mini",
+        model_name: str = None,
         temperature: float = 0.0,
         use_langfuse: bool = True,
     ):
@@ -50,7 +39,7 @@ class OfficeAutomationGraph:
         OfficeAutomationGraph 초기화
 
         Args:
-            model_name: 사용할 LLM 모델
+            model_name: 사용할 LLM 모델 (None이면 .env에서 OPENAI_MODEL_NAME 사용)
             temperature: 모델 temperature
             use_langfuse: Langfuse 로깅 사용 여부
         """
@@ -59,9 +48,15 @@ class OfficeAutomationGraph:
         # 환경 변수 로드
         load_dotenv()
 
+        # 모델 이름 결정: 파라미터 > 환경변수 > 기본값
+        if model_name is None:
+            model_name = os.getenv("OPENAI_MODEL_NAME")
+
         self.model_name = model_name
         self.temperature = temperature
         self.use_langfuse = use_langfuse
+
+        print(f"[📦] Using model: {self.model_name}")
 
         # Langfuse 초기화
         self._init_langfuse()
@@ -70,31 +65,10 @@ class OfficeAutomationGraph:
         self.intent_classifier = IntentClassifier(model_name=model_name, temperature=temperature)
         self.delivery_parser = DeliveryParser(model_name=model_name, temperature=temperature)
         self.product_parser = ProductOrderParser(model_name=model_name, temperature=temperature)
+        self.aluminum_parser = AluminumCalculationParser(model_name=model_name, temperature=temperature)
 
         # 체크포인터 (메모리 저장)
         self.checkpointer = MemorySaver()
-
-        # Middleware 설정 (AluminumSubGraph용)
-        aluminum_middlewares = []
-        if self.use_langfuse and self.langfuse_client:
-            langfuse_middleware = LangfuseToolLoggingMiddleware(
-                langfuse_client=self.langfuse_client,
-                verbose=True,
-                log_errors=True
-            )
-            aluminum_middlewares.append(langfuse_middleware)
-
-        # 알루미늄 계산 도구 리스트
-        aluminum_tools = [
-            calculate_aluminum_price_square_pipe,
-            calculate_aluminum_price_round_pipe,
-            calculate_aluminum_price_angle,
-            calculate_aluminum_price_flat_bar,
-            calculate_aluminum_price_round_bar,
-            calculate_aluminum_price_channel,
-            calculate_price_from_weight_and_price_per_kg,
-            calculate_price_per_kg_from_unit_price_and_weight,
-        ]
 
         # 서브그래프 생성
         print(f"[🔨] Creating subgraphs...")
@@ -109,10 +83,7 @@ class OfficeAutomationGraph:
             document_generator=DocumentGenerator
         )
         self.aluminum_subgraph = create_aluminum_subgraph(
-            model_name=model_name,
-            temperature=temperature,
-            aluminum_tools=aluminum_tools,
-            middleware=aluminum_middlewares if aluminum_middlewares else None
+            parser=self.aluminum_parser
         )
 
         # 메인 그래프 빌드

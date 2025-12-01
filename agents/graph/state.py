@@ -31,6 +31,7 @@ class OfficeAutomationState(TypedDict):
     # 파싱 결과 (시나리오별로 다른 타입)
     delivery_info: Optional["DeliveryInfo"]  # 운송장 정보
     product_order_info: Optional["ProductOrderInfo"]  # 제품 주문 정보
+    aluminum_calculation_info: Optional["AluminumCalculationInfo"]  # 알루미늄 계산 정보
     parsing_error: Optional[str]  # 파싱 에러 메시지
 
     # HITL 상태 (Human-in-the-Loop)
@@ -111,7 +112,7 @@ class AluminumCalculationInfo(BaseModel):
     width: Optional[float] = Field(None, description="폭 (mm)")
     height: Optional[float] = Field(None, description="높이 (mm)")
     thickness: Optional[float] = Field(None, description="두께 (mm)")
-    diameter: Optional[float] = Field(None, description="지름/외경 (mm)")
+    diameter: Optional[float] = Field(None, description="지름 (mm)")
     width_a: Optional[float] = Field(None, description="앵글 폭 A (mm)")
     width_b: Optional[float] = Field(None, description="앵글 폭 B (mm)")
     channel_height: Optional[float] = Field(None, description="찬넬 웹 높이 (mm)")

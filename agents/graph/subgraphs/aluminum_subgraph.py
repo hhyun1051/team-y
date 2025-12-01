@@ -1,110 +1,221 @@
 """
-Aluminum SubGraph - 알루미늄 단가 계산 워크플로우
+Aluminum SubGraph - 알루미늄 계산 워크플로우
 
 워크플로우:
-1. aluminum_agent → Agent가 8개 계산 도구 중 선택하여 실행
+1. parse_aluminum → 파싱 성공 시 calculate_aluminum
+2. parse_aluminum → 파싱 실패 시 retry
+3. calculate_aluminum → 계산 수행 후 END
 
 특징:
-- 승인 프로세스 없음 (즉시 실행)
-- Agent 패턴 사용 (LLM이 도구 선택)
-- 단일 노드 SubGraph
+- 멀티턴 지원 (파싱 실패 시 시나리오 잠금)
+- 승인 프로세스 없음 (즉시 계산)
+- 8가지 계산 공식 지원
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 from langgraph.graph import StateGraph, END
-from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+import time
 
 from ..state import OfficeAutomationState
+from ..utils.tools import aluminum_calculator
 
 
-def create_aluminum_subgraph(model_name: str, temperature: float, aluminum_tools: List, middleware: List = None):
+def create_aluminum_subgraph(parser):
     """
     알루미늄 계산 서브그래프 생성
 
     Args:
-        model_name: LLM 모델 이름
-        temperature: 모델 temperature
-        aluminum_tools: 8개 알루미늄 계산 도구 리스트
-        middleware: Middleware 리스트 (Langfuse 로깅 등)
+        parser: AluminumCalculationParser 인스턴스
 
     Returns:
-        Compiled SubGraph (interrupt 없음)
+        Compiled SubGraph
     """
-    # Agent 생성 (8개 계산 도구)
-    system_prompt = """당신은 알루미늄 제품 단가 계산 전문가입니다.
-
-사용자 입력에서 제품 종류와 규격을 파악하여 적절한 계산 도구를 선택하세요.
-
-**사용 가능한 도구:**
-- calculate_aluminum_price_square_pipe: 사각파이프 (폭, 높이, 두께, 길이)
-- calculate_aluminum_price_round_pipe: 원파이프 (외경, 두께, 길이)
-- calculate_aluminum_price_angle: 앵글(ㄱ자) (폭A, 폭B, 두께, 길이)
-- calculate_aluminum_price_flat_bar: 평철 (폭, 두께, 길이)
-- calculate_aluminum_price_round_bar: 환봉 (지름, 길이)
-- calculate_aluminum_price_channel: 찬넬(C형강) (높이, 폭, 두께, 길이)
-- calculate_price_from_weight_and_price_per_kg: 중량과 kg당 가격으로 개당 가격 계산
-- calculate_price_per_kg_from_unit_price_and_weight: 제품 단가와 중량으로 kg당 가격 계산
-
-**중요:**
-- 사용자 입력에서 제품 종류와 규격을 정확히 파악하세요
-- 적절한 도구를 선택하여 즉시 계산을 수행하세요
-- 계산 결과를 명확하게 반환하세요"""
-
-    agent = create_agent(
-        model=f"openai:{model_name}",
-        tools=aluminum_tools,
-        system_prompt=system_prompt,
-        middleware=middleware if middleware else []
-    )
-
     subgraph = StateGraph(OfficeAutomationState)
 
-    # 노드 추가 (Agent를 클로저로 캡처)
-    def aluminum_agent_node(state):
-        return _run_aluminum_agent(state, agent)
+    # 노드 추가 (parser를 클로저로 캡처)
+    def parse_node(state):
+        return _parse_aluminum(state, parser)
 
-    subgraph.add_node("aluminum_agent", aluminum_agent_node)
-    subgraph.set_entry_point("aluminum_agent")
-    subgraph.add_edge("aluminum_agent", END)
+    subgraph.add_node("parse_aluminum", parse_node)
+    subgraph.add_node("calculate_aluminum", _calculate_aluminum)
+    subgraph.add_node("retry", _retry_node)
 
-    # Compile: interrupt 없음 (즉시 실행)
+    # 진입점
+    subgraph.set_entry_point("parse_aluminum")
+
+    # 조건부 라우팅: parse → calculate or retry
+    def should_retry(state: OfficeAutomationState) -> str:
+        """파싱 에러가 있으면 retry, 없으면 calculate"""
+        if state.get("parsing_error"):
+            return "retry"
+        return "calculate_aluminum"
+
+    subgraph.add_conditional_edges(
+        "parse_aluminum",
+        should_retry,
+        {
+            "calculate_aluminum": "calculate_aluminum",
+            "retry": "retry"
+        }
+    )
+
+    # calculate → END
+    subgraph.add_edge("calculate_aluminum", END)
+
+    # retry → END (멀티턴 대기)
+    subgraph.add_edge("retry", END)
+
     return subgraph.compile()
 
 
-def _run_aluminum_agent(state: OfficeAutomationState, agent) -> Dict[str, Any]:
+def _parse_aluminum(state: OfficeAutomationState, parser) -> Dict[str, Any]:
     """
-    알루미늄 Agent 실행 노드
-
-    Args:
-        state: 현재 상태
-        agent: create_agent로 생성된 Agent
-
-    Returns:
-        업데이트된 상태 (messages 포함)
+    알루미늄 정보 파싱 노드 (멀티턴 지원)
     """
     raw_input = state.get("raw_input", "")
-    print(f"[🔧] Running aluminum calculation agent: {raw_input[:50]}...")
+    messages = state.get("messages", [])
+
+    print(f"[🔧] Parsing aluminum info from: {raw_input[:50]}...")
+    print(f"[📝] Message history count: {len(messages)}")
 
     try:
-        # Agent에게 사용자 입력 전달
-        messages = state.get("messages", [])
+        # 멀티턴 지원: messages 전달
+        parsed_info, is_valid, error_msg = parser.parse_with_validation(raw_input, messages=messages)
 
-        # 새 메시지 추가 (raw_input을 HumanMessage로)
-        if raw_input and not any(isinstance(m, HumanMessage) and m.content == raw_input for m in messages):
-            messages = messages + [HumanMessage(content=raw_input)]
+        if not is_valid:
+            print(f"[❌] Parsing failed: {error_msg}")
+            return {
+                "parsing_error": error_msg,
+                "aluminum_calculation_info": None,
+                "active_scenario": "aluminum_calculation",
+                "active_scenario_timestamp": time.time()
+            }
 
-        # Agent 실행
-        result = agent.invoke({"messages": messages})
-
-        print(f"[✅] Aluminum calculation completed")
-
-        # Agent의 메시지 반환
-        return {"messages": result["messages"]}
+        print(f"[✅] Aluminum info parsed: {parsed_info.product_type}, {parsed_info.length_m}m")
+        return {
+            "aluminum_calculation_info": parsed_info,
+            "parsing_error": None,
+            "active_scenario": None,
+            "active_scenario_timestamp": None
+        }
 
     except Exception as e:
-        print(f"[❌] Aluminum calculation failed: {e}")
+        print(f"[❌] Parsing exception: {e}")
+        return {
+            "parsing_error": f"파싱 중 오류 발생: {str(e)}",
+            "aluminum_calculation_info": None,
+            "active_scenario": "aluminum_calculation",
+            "active_scenario_timestamp": time.time()
+        }
+
+
+def _calculate_aluminum(state: OfficeAutomationState) -> Dict[str, Any]:
+    """
+    알루미늄 계산 노드 - 8가지 공식 중 선택하여 계산
+    """
+    calc_info = state.get("aluminum_calculation_info")
+
+    if not calc_info:
+        print("[❌] No aluminum calculation info")
         from langchain_core.messages import AIMessage
         return {
-            "messages": [AIMessage(content=f"❌ 알루미늄 계산 실패: {str(e)}")]
+            "messages": [AIMessage(content="❌ 알루미늄 계산 정보가 없습니다.")]
         }
+
+    print(f"[🔧] Calculating {calc_info.product_type}...")
+
+    try:
+        result = None
+
+        # 제품 타입에 따라 계산 함수 선택
+        if calc_info.product_type == "round_pipe":
+            result = aluminum_calculator.calculate_round_pipe_weight(
+                diameter=calc_info.diameter,
+                thickness=calc_info.thickness,
+                length=calc_info.length_m,
+                quantity=calc_info.quantity,
+                density=calc_info.density
+            )
+
+        elif calc_info.product_type == "flat_bar":
+            result = aluminum_calculator.calculate_flat_bar_weight(
+                width=calc_info.width,
+                thickness=calc_info.thickness,
+                density=calc_info.density,
+                length=calc_info.length_m,
+                quantity=calc_info.quantity
+            )
+
+        elif calc_info.product_type == "channel":
+            result = aluminum_calculator.calculate_channel_weight(
+                width=calc_info.channel_width,
+                height=calc_info.channel_height,
+                thickness=calc_info.thickness,
+                density=calc_info.density,
+                length=calc_info.length_m,
+                quantity=calc_info.quantity
+            )
+
+        elif calc_info.product_type == "square_pipe":
+            result = aluminum_calculator.calculate_square_pipe_weight(
+                width=calc_info.width,
+                height=calc_info.height,
+                thickness=calc_info.thickness,
+                density=calc_info.density,
+                length=calc_info.length_m,
+                quantity=calc_info.quantity
+            )
+
+        elif calc_info.product_type == "angle":
+            result = aluminum_calculator.calculate_angle_weight(
+                width=calc_info.width_a,
+                height=calc_info.width_b,
+                thickness=calc_info.thickness,
+                density=calc_info.density,
+                length=calc_info.length_m,
+                quantity=calc_info.quantity
+            )
+
+        elif calc_info.product_type == "round_bar":
+            result = aluminum_calculator.calculate_round_bar_weight(
+                diameter=calc_info.diameter,
+                density=calc_info.density,
+                length=calc_info.length_m,
+                quantity=calc_info.quantity
+            )
+
+        else:
+            raise ValueError(f"Unknown product type: {calc_info.product_type}")
+
+        # 결과 포맷팅
+        formatted_result = aluminum_calculator.format_result(result)
+
+        print(f"[✅] Calculation completed: {result['weight_kg']:.4f} kg")
+
+        from langchain_core.messages import AIMessage
+        return {
+            "messages": [AIMessage(content=formatted_result)]
+        }
+
+    except Exception as e:
+        print(f"[❌] Calculation failed: {e}")
+        from langchain_core.messages import AIMessage
+        return {
+            "messages": [AIMessage(content=f"❌ 계산 실패: {str(e)}")]
+        }
+
+
+def _retry_node(state: OfficeAutomationState) -> Dict[str, Any]:
+    """
+    재시도 메시지 생성 노드
+    """
+    error_msg = state.get("parsing_error", "알 수 없는 오류")
+
+    retry_message = f"""❌ {error_msg}
+
+누락된 정보만 입력해주세요."""
+
+    from langchain_core.messages import AIMessage
+    return {
+        "messages": [AIMessage(content=retry_message)]
+    }
