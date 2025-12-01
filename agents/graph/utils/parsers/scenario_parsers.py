@@ -24,20 +24,31 @@ class DeliveryParser:
             model_name: 사용할 LLM 모델
             temperature: 모델 temperature
         """
-        system_prompt = """당신은 배송 정보 파싱 전문가입니다.
+        system_prompt = """당신은 운송장 정보 파싱 전문가입니다.
 
 사용자 입력에서 다음 정보를 추출하세요:
 
-**필수 필드:**
-- name: 수령인 이름 (한글, 영문 모두 가능)
-- phone: 전화번호 (010-XXXX-XXXX 형식으로 정규화)
-- address: 배송 주소 (상세주소 포함)
+**필수 필드 (하차지 정보):**
+- unloading_site: 하차지 (회사 이름, 예: "삼성전자", "현대건설")
+- address: 주소 (구체적인 상세 주소)
+- contact: 연락처 (010-XXXX-XXXX 형식으로 정규화)
+
+**선택 필드 (상차지 정보):**
+- loading_site: 상차지 (기본값: "유진알루미늄")
+- loading_address: 상차지 주소
+- loading_phone: 상차지 전화번호
+
+**운송비 정보:**
+- payment_type: "착불" 또는 "선불" (기본값은 사용자 입력에서 유추)
+- freight_cost: 운송비 (착불일 경우에만 입력, 원 단위 정수)
 
 **파싱 규칙:**
 1. 전화번호는 010-XXXX-XXXX 형식으로 하이픈 포함
-2. 이름은 띄어쓰기 없이 붙여서 저장
-3. 주소는 가능한 상세하게 (동/호수 포함)
-4. 불명확한 부분은 notes에 기록
+2. 주소는 가능한 상세하게 (동/호수 포함)
+3. 운송비는 "착불"이고 금액이 명시된 경우에만 freight_cost에 입력
+4. "선불"인 경우 freight_cost는 None
+5. 상차지가 명시되지 않으면 기본값 "유진알루미늄" 사용
+6. 불명확한 부분은 notes에 기록
 
 **신뢰도 판단:**
 - 모든 필드가 명확: 1.0
@@ -81,13 +92,17 @@ class DeliveryParser:
         try:
             delivery_info = self.parse(text)
 
-            # 필수 필드 검증
-            if not delivery_info.name:
-                return delivery_info, False, "수령인 이름이 누락되었습니다."
-            if not delivery_info.phone:
-                return delivery_info, False, "전화번호가 누락되었습니다."
+            # 필수 필드 검증 (하차지 정보)
+            if not delivery_info.unloading_site:
+                return delivery_info, False, "하차지가 누락되었습니다."
             if not delivery_info.address:
-                return delivery_info, False, "배송 주소가 누락되었습니다."
+                return delivery_info, False, "주소가 누락되었습니다."
+            if not delivery_info.contact:
+                return delivery_info, False, "연락처가 누락되었습니다."
+
+            # payment_type 검증
+            if not delivery_info.payment_type:
+                return delivery_info, False, "운송비 지불 방법(착불/선불)이 누락되었습니다."
 
             # 신뢰도 검증
             if delivery_info.confidence and delivery_info.confidence < 0.5:

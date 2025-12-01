@@ -5,24 +5,50 @@ DOCX 템플릿 기반 문서 생성 및 PDF 변환 도구
 """
 
 from langchain_core.tools import tool
-from agents.document_generator import DocumentGenerator
+from ..document_generator import DocumentGenerator
 
 
 @tool
-def generate_delivery_document(name: str, phone: str, address: str) -> str:
+def generate_delivery_document(
+    unloading_site: str,
+    address: str,
+    contact: str,
+    payment_type: str,
+    loading_site: str = "유진알루미늄",
+    loading_address: str = None,
+    loading_phone: str = None,
+    freight_cost: int = None
+) -> str:
     """
     승인된 운송장 정보로 DOCX 및 PDF 문서를 생성합니다.
 
     Args:
-        name: 수령인 이름
-        phone: 전화번호
-        address: 배송 주소
+        unloading_site: 하차지 (회사 이름)
+        address: 주소 (상세 주소)
+        contact: 연락처
+        payment_type: 운송비 지불 방법 ("착불" 또는 "선불")
+        loading_site: 상차지 (기본값: "유진알루미늄")
+        loading_address: 상차지 주소 (선택)
+        loading_phone: 상차지 전화번호 (선택)
+        freight_cost: 운송비 (착불일 경우에만, 원 단위)
 
     Returns:
         생성된 문서 경로
     """
     try:
-        result = DocumentGenerator.generate_delivery_document(name, phone, address)
+        result = DocumentGenerator.generate_delivery_document(
+            unloading_site=unloading_site,
+            address=address,
+            contact=contact,
+            payment_type=payment_type,
+            loading_site=loading_site,
+            loading_address=loading_address,
+            loading_phone=loading_phone,
+            freight_cost=freight_cost
+        )
+
+        freight_info = f"{freight_cost:,}원" if freight_cost else "미정"
+
         return f"""✅ 운송장 생성 완료!
 
 **생성된 파일:**
@@ -30,9 +56,11 @@ def generate_delivery_document(name: str, phone: str, address: str) -> str:
 - PDF: {result['pdf']}
 
 **문서 내용:**
-- 수령인: {name}
-- 전화번호: {phone}
-- 배송 주소: {address}"""
+- 하차지: {unloading_site}
+- 주소: {address}
+- 연락처: {contact}
+- 상차지: {loading_site}
+- 운송비: {payment_type} ({freight_info if payment_type == '착불' else '해당없음'})"""
     except Exception as e:
         return f"❌ 운송장 생성 실패: {str(e)}"
 

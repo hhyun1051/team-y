@@ -67,9 +67,21 @@ class IntentClassification(BaseModel):
 
 class DeliveryInfo(BaseModel):
     """운송장 정보"""
-    name: str = Field(description="수령인 이름")
-    phone: str = Field(description="전화번호 (010-XXXX-XXXX 형식)")
-    address: str = Field(description="배송 주소 (상세주소 포함)")
+    # 하차지 정보 (필수)
+    unloading_site: str = Field(description="하차지 (회사 이름)")
+    address: str = Field(description="주소 (구체적인 상세 주소)")
+    contact: str = Field(description="연락처 (010-XXXX-XXXX 형식)")
+
+    # 상차지 정보 (선택, 기본값: 유진알루미늄)
+    loading_site: str = Field(default="유진알루미늄", description="상차지")
+    loading_address: Optional[str] = Field(None, description="상차지 주소 (선택)")
+    loading_phone: Optional[str] = Field(None, description="상차지 전화번호 (선택)")
+
+    # 운송비 정보
+    payment_type: Literal["착불", "선불"] = Field(description="운송비 지불 방법: 착불 또는 선불")
+    freight_cost: Optional[int] = Field(None, description="운송비 (착불일 경우에만 입력, 원 단위)")
+
+    # 메타데이터
     confidence: Optional[float] = Field(None, description="파싱 신뢰도 (0.0~1.0)")
     notes: Optional[str] = Field(None, description="추가 메모")
 

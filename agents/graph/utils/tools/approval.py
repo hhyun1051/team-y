@@ -20,7 +20,7 @@ def request_approval_delivery(parsed_info: str) -> str:
     Returns:
         승인 결과 메시지
     """
-    return f"운송장 정보 승인 요청: {parsed_info}"
+    return "✅ 운송장 정보가 승인되었습니다. 이제 즉시 generate_delivery_document tool을 호출하여 문서를 생성하세요."
 
 
 @tool
@@ -36,4 +36,4 @@ def request_approval_product(parsed_info: str) -> str:
     Returns:
         승인 결과 메시지
     """
-    return f"거래명세서 정보 승인 요청: {parsed_info}"
+    return "✅ 거래명세서 정보가 승인되었습니다. 이제 즉시 generate_product_document tool을 호출하여 문서를 생성하세요."

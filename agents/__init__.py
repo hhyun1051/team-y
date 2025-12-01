@@ -2,14 +2,14 @@
 Office Automation Agents Module
 
 리팩토링된 모듈 구조:
-- graph/: State 및 그래프 정의
-- tools/: HITL 승인 및 문서 생성 도구
-- parsers/: 시나리오별 파서
+- graph/: State, 그래프 정의 및 워크플로우
+  - utils/: 유틸리티 (tools, parsers, document_generator, intent_classifier)
 - middleware/: 로깅 및 에러 핸들링
+- prompts/: 프롬프트 템플릿
 """
 
 # Main workflow
-from .workflow import OfficeAutomationGraph
+from .graph.graph import OfficeAutomationGraph
 
 # Graph components
 from .graph import (
@@ -20,7 +20,7 @@ from .graph import (
 )
 
 # Tools
-from .tools import (
+from .graph.utils.tools import (
     request_approval_delivery,
     request_approval_product,
     generate_delivery_document,
@@ -28,13 +28,19 @@ from .tools import (
 )
 
 # Parsers
-from .parsers import DeliveryParser, ProductOrderParser
+from .graph.utils.parsers import DeliveryParser, ProductOrderParser
 
 # Intent Classifier
-from .intent_classifier import IntentClassifier
+from .graph.utils.intent_classifier import IntentClassifier
 
 # Document Generator
-from .document_generator import DocumentGenerator
+from .graph.utils.document_generator import DocumentGenerator
+
+# Middleware
+from .middleware import (
+    LangfuseToolLoggingMiddleware,
+    ToolErrorHandlerMiddleware,
+)
 
 __all__ = [
     # Main
@@ -59,4 +65,8 @@ __all__ = [
 
     # Generators
     "DocumentGenerator",
+
+    # Middleware
+    "LangfuseToolLoggingMiddleware",
+    "ToolErrorHandlerMiddleware",
 ]

@@ -19,15 +19,16 @@ from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 
 # Local imports
-from .intent_classifier import IntentClassifier
-from .parsers import DeliveryParser, ProductOrderParser
-from .document_generator import DocumentGenerator
-from .tools import (
+from .utils.intent_classifier import IntentClassifier
+from .utils.parsers import DeliveryParser, ProductOrderParser
+from .utils.document_generator import DocumentGenerator
+from .utils.tools import (
     request_approval_delivery,
     request_approval_product,
     generate_delivery_document,
     generate_product_document,
 )
+from ..middleware import LangfuseToolLoggingMiddleware
 
 
 class OfficeAutomationGraph:
@@ -67,6 +68,18 @@ class OfficeAutomationGraph:
         # 체크포인터 (메모리 저장)
         self.checkpointer = MemorySaver()
 
+        # Middleware 설정
+        middlewares = []
+
+        # Langfuse Tool Logging Middleware
+        if self.use_langfuse and self.langfuse_client:
+            langfuse_middleware = LangfuseToolLoggingMiddleware(
+                langfuse_client=self.langfuse_client,
+                verbose=True,
+                log_errors=True
+            )
+            middlewares.append(langfuse_middleware)
+
         # HITL 미들웨어 설정 (정보 확인만 승인, 문서 생성은 자동)
         hitl_middleware = HumanInTheLoopMiddleware(
             interrupt_on={
@@ -75,6 +88,7 @@ class OfficeAutomationGraph:
             },
             description_prefix="승인이 필요합니다",
         )
+        middlewares.append(hitl_middleware)
 
         # System prompt
         system_prompt = """당신은 사무 자동화 전문가입니다.
@@ -83,21 +97,25 @@ class OfficeAutomationGraph:
 
 **워크플로우:**
 
-1. **정보 승인 요청**
+1. **정보 승인 요청 (첫 번째 단계)**
    - 사용자가 지시한 대로 정확히 `request_approval_delivery` 또는 `request_approval_product` tool을 호출하세요
    - tool 호출 시 parsed_info 파라미터에 포맷팅된 정보를 전달하세요
    - tool 호출 후 "승인을 기다립니다"라고만 응답하세요
+   - 이 메시지 이후 워크플로우는 일시 중단되며, 사용자의 승인을 기다립니다
 
-2. **승인 후 문서 자동 생성 (매우 중요!)**
-   - 승인 도구의 응답을 받으면 IMMEDIATELY(즉시) 문서 생성 도구를 호출해야 합니다
+2. **승인 후 문서 자동 생성 (두 번째 단계 - 승인 완료 후 재개)**
+   - 승인 도구가 "승인되었습니다"라는 응답을 반환하면, IMMEDIATELY(즉시) 문서 생성 도구를 호출하세요
    - `generate_delivery_document` 또는 `generate_product_document` tool을 사용자가 지시한 파라미터로 정확히 호출하세요
    - 추가 승인이나 대기 없이 바로 문서를 생성하세요
-   - 문서 생성 tool의 응답을 그대로 사용자에게 전달하세요
+   - 문서 생성 tool의 응답을 **절대 수정하지 말고** **정확히 그대로** 사용자에게 전달하세요
+   - Tool이 반환한 텍스트를 재작성하거나 요약하지 마세요
+   - "승인을 기다립니다"라는 메시지는 절대 반복하지 마세요
 
 **중요 규칙:**
-- 승인 tool 응답 후 반드시 문서 생성 tool을 호출하세요 (필수!)
-- 사용자의 지시사항에 있는 파라미터를 정확히 사용하세요
-- 승인을 기다리거나 추가 확인을 요청하지 마세요
+- 승인 tool이 "승인되었습니다" 응답을 반환하면, 반드시 문서 생성 tool을 즉시 호출하세요 (필수!)
+- 문서 생성 tool이 반환한 메시지를 **한 글자도 바꾸지 말고** 그대로 사용자에게 전달하세요
+- Tool의 출력 형식(마크다운, 이모지, 줄바꿈 등)을 보존하세요
+- "승인을 기다립니다"는 첫 번째 승인 요청 시에만 사용하고, 승인 완료 후에는 절대 사용하지 마세요
 """
 
         # Agent 생성
@@ -110,7 +128,7 @@ class OfficeAutomationGraph:
                 generate_product_document,
             ],
             system_prompt=system_prompt,
-            middleware=[hitl_middleware],
+            middleware=middlewares,
             checkpointer=self.checkpointer,
         )
 
@@ -242,12 +260,27 @@ class OfficeAutomationGraph:
 
             if is_valid:
                 formatted_info = f"""**운송장 정보:**
-- 이름: {parsed_info.name}
-- 전화번호: {parsed_info.phone}
+
+【하차지 정보】
+- 하차지: {parsed_info.unloading_site}
 - 주소: {parsed_info.address}
-"""
+- 연락처: {parsed_info.contact}
+
+【상차지 정보】
+- 상차지: {parsed_info.loading_site}"""
+                if parsed_info.loading_address:
+                    formatted_info += f"\n- 상차지 주소: {parsed_info.loading_address}"
+                if parsed_info.loading_phone:
+                    formatted_info += f"\n- 상차지 전화번호: {parsed_info.loading_phone}"
+
+                formatted_info += f"\n\n【운송비】\n- 지불방법: {parsed_info.payment_type}"
+                if parsed_info.freight_cost:
+                    formatted_info += f"\n- 운송비: {parsed_info.freight_cost:,}원"
+
+                if parsed_info.notes:
+                    formatted_info += f"\n\n- 참고: {parsed_info.notes}"
                 if parsed_info.confidence:
-                    formatted_info += f"\n신뢰도: {parsed_info.confidence * 100:.0f}%"
+                    formatted_info += f"\n\n신뢰도: {parsed_info.confidence * 100:.0f}%"
 
         elif intent.scenario == "product_order":
             print(f"[🏭] Parsing product order info...")
@@ -331,7 +364,7 @@ class OfficeAutomationGraph:
 
 **지시사항:**
 먼저 `request_approval_delivery` tool을 호출하여 승인을 요청하세요.
-승인 후 즉시 `generate_delivery_document` tool을 호출하세요 (이름={parsed_info.name}, 전화번호={parsed_info.phone}, 주소={parsed_info.address})"""
+승인 후 즉시 `generate_delivery_document` tool을 호출하세요 (하차지={parsed_info.unloading_site}, 주소={parsed_info.address}, 연락처={parsed_info.contact}, 지불방법={parsed_info.payment_type})"""
         else:  # product_order
             user_message = f"""시나리오: product_order (거래명세서)
 
@@ -371,16 +404,16 @@ class OfficeAutomationGraph:
     def resume(
         self,
         decision_type: str,
-        edited_args: Optional[Dict[str, Any]] = None,
         reject_message: Optional[str] = None,
         thread_id: str = "default",
     ) -> Dict[str, Any]:
         """
-        HITL 승인 후 워크플로우 재개
+        HITL 승인/거절 후 워크플로우 재개
+
+        편집은 bot.py에서 직접 문서 생성하므로 여기서는 approve/reject만 처리
 
         Args:
-            decision_type: "approve", "edit", "reject"
-            edited_args: edit인 경우 수정된 args
+            decision_type: "approve" 또는 "reject"
             reject_message: reject인 경우 거절 메시지
             thread_id: 스레드 ID
 
@@ -391,27 +424,13 @@ class OfficeAutomationGraph:
 
         config = {"configurable": {"thread_id": thread_id}}
 
-        # 결정 타입에 따라 Command 생성
         if decision_type == "approve":
-            print(f"[✅] Resuming with approval...")
+            print(f"[✅] Resuming with approval...", flush=True)
             resume_data = Command(
                 resume={"decisions": [{"type": "approve"}]}
             )
-        elif decision_type == "edit":
-            print(f"[✏️] Resuming with edits: {edited_args}")
-            resume_data = Command(
-                resume={
-                    "decisions": [{
-                        "type": "edit",
-                        "edited_action": {
-                            "name": "request_approval",
-                            "args": edited_args or {}
-                        }
-                    }]
-                }
-            )
         elif decision_type == "reject":
-            print(f"[❌] Resuming with rejection: {reject_message}")
+            print(f"[❌] Resuming with rejection: {reject_message}", flush=True)
             resume_data = Command(
                 resume={
                     "decisions": [{
@@ -421,8 +440,10 @@ class OfficeAutomationGraph:
                 }
             )
         else:
-            raise ValueError(f"Invalid decision_type: {decision_type}")
+            raise ValueError(f"Invalid decision_type: {decision_type}. Only 'approve' or 'reject' allowed.")
 
         # Agent 재개
+        print(f"[🚀] Invoking agent with resume...", flush=True)
         result = self.agent.invoke(resume_data, config)
+        print(f"[✅] Agent completed", flush=True)
         return result

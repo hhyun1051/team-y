@@ -41,16 +41,24 @@ class DocumentGenerator:
                         if key in run.text:
                             run.text = run.text.replace(key, value)
 
-        # 테이블의 텍스트 치환
+        # 테이블의 텍스트 치환 (스타일 보존)
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
-                    for key, value in replacements.items():
-                        if key in cell.text:
-                            for paragraph in cell.paragraphs:
-                                for run in paragraph.runs:
-                                    if key in run.text:
-                                        run.text = run.text.replace(key, value)
+                    for paragraph in cell.paragraphs:
+                        # 전체 단락 텍스트 확인
+                        full_text = paragraph.text
+                        needs_replacement = any(key in full_text for key in replacements.keys())
+
+                        if needs_replacement:
+                            # 모든 run의 텍스트를 교체 (스타일은 각 run에 유지됨)
+                            for run in paragraph.runs:
+                                original_text = run.text
+                                new_text = original_text
+                                for key, value in replacements.items():
+                                    new_text = new_text.replace(key, value)
+                                if new_text != original_text:
+                                    run.text = new_text
 
         # 저장
         doc.save(output_path)
@@ -101,14 +109,29 @@ class DocumentGenerator:
         return pdf_path
 
     @classmethod
-    def generate_delivery_document(cls, name: str, phone: str, address: str) -> Dict[str, Path]:
+    def generate_delivery_document(
+        cls,
+        unloading_site: str,
+        address: str,
+        contact: str,
+        payment_type: str,
+        loading_site: str = "유진알루미늄",
+        loading_address: str = None,
+        loading_phone: str = None,
+        freight_cost: int = None
+    ) -> Dict[str, Path]:
         """
-        배송 문서 생성 (DOCX + PDF)
+        운송장 문서 생성 (DOCX + PDF)
 
         Args:
-            name: 수령인 이름
-            phone: 전화번호
-            address: 배송 주소
+            unloading_site: 하차지 (회사 이름)
+            address: 주소 (상세 주소)
+            contact: 연락처
+            payment_type: 운송비 지불 방법 ("착불" 또는 "선불")
+            loading_site: 상차지 (기본값: "유진알루미늄")
+            loading_address: 상차지 주소 (선택)
+            loading_phone: 상차지 전화번호 (선택)
+            freight_cost: 운송비 (착불일 경우에만, 원 단위)
 
         Returns:
             {"docx": Path, "pdf": Path}
@@ -122,9 +145,14 @@ class DocumentGenerator:
 
         # 템플릿 치환 데이터
         replacements = {
-            "{{NAME}}": name,
-            "{{PHONE}}": phone,
+            "{{UNLOADING_SITE}}": unloading_site,
             "{{ADDRESS}}": address,
+            "{{CONTACT}}": contact,
+            "{{LOADING_SITE}}": loading_site,
+            "{{LOADING_ADDRESS}}": loading_address or "",
+            "{{LOADING_PHONE}}": loading_phone or "",
+            "{{PAYMENT_TYPE}}": payment_type,
+            "{{FREIGHT_COST}}": f"{freight_cost:,}원" if freight_cost else "미정",
             "{{DATE}}": datetime.now().strftime("%Y년 %m월 %d일"),
         }
 
