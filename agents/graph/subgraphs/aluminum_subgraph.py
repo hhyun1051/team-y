@@ -134,16 +134,18 @@ def _calculate_aluminum(state: OfficeAutomationState) -> Dict[str, Any]:
                 thickness=calc_info.thickness,
                 length=calc_info.length_m,
                 quantity=calc_info.quantity,
-                density=calc_info.density
+                density=calc_info.density,
+                price_per_kg=calc_info.price_per_kg if calc_info.price_per_kg else None
             )
 
         elif calc_info.product_type == "flat_bar":
             result = aluminum_calculator.calculate_flat_bar_weight(
                 width=calc_info.width,
                 thickness=calc_info.thickness,
-                density=calc_info.density,
                 length=calc_info.length_m,
-                quantity=calc_info.quantity
+                quantity=calc_info.quantity,
+                density=calc_info.density,
+                price_per_kg=calc_info.price_per_kg if calc_info.price_per_kg else None
             )
 
         elif calc_info.product_type == "channel":
@@ -151,9 +153,10 @@ def _calculate_aluminum(state: OfficeAutomationState) -> Dict[str, Any]:
                 width=calc_info.channel_width,
                 height=calc_info.channel_height,
                 thickness=calc_info.thickness,
-                density=calc_info.density,
                 length=calc_info.length_m,
-                quantity=calc_info.quantity
+                quantity=calc_info.quantity,
+                density=calc_info.density,
+                price_per_kg=calc_info.price_per_kg if calc_info.price_per_kg else None
             )
 
         elif calc_info.product_type == "square_pipe":
@@ -161,9 +164,10 @@ def _calculate_aluminum(state: OfficeAutomationState) -> Dict[str, Any]:
                 width=calc_info.width,
                 height=calc_info.height,
                 thickness=calc_info.thickness,
-                density=calc_info.density,
                 length=calc_info.length_m,
-                quantity=calc_info.quantity
+                quantity=calc_info.quantity,
+                density=calc_info.density,
+                price_per_kg=calc_info.price_per_kg if calc_info.price_per_kg else None
             )
 
         elif calc_info.product_type == "angle":
@@ -171,17 +175,19 @@ def _calculate_aluminum(state: OfficeAutomationState) -> Dict[str, Any]:
                 width=calc_info.width_a,
                 height=calc_info.width_b,
                 thickness=calc_info.thickness,
-                density=calc_info.density,
                 length=calc_info.length_m,
-                quantity=calc_info.quantity
+                quantity=calc_info.quantity,
+                density=calc_info.density,
+                price_per_kg=calc_info.price_per_kg if calc_info.price_per_kg else None
             )
 
         elif calc_info.product_type == "round_bar":
             result = aluminum_calculator.calculate_round_bar_weight(
                 diameter=calc_info.diameter,
-                density=calc_info.density,
                 length=calc_info.length_m,
-                quantity=calc_info.quantity
+                quantity=calc_info.quantity,
+                density=calc_info.density,
+                price_per_kg=calc_info.price_per_kg if calc_info.price_per_kg else None
             )
 
         else:

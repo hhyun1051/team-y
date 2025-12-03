@@ -279,84 +279,82 @@ class AluminumCalculationParser:
 
 사용자 입력에서 다음 정보를 추출하세요:
 
-**필수 필드:**
-- product_type: 제품 형상 ("square_pipe", "round_pipe", "angle", "flat_bar", "round_bar", "channel" 중 하나)
-- length_m: 길이 (m 단위, 소수점 가능)
+**🔴 핵심 필수 필드 (절대 누락 불가):**
 
-**형상별 치수 (product_type에 따라 필수):**
-1. square_pipe (사각파이프):
-   - width: 폭 (mm)
-   - height: 높이 (mm)
-   - thickness: 두께 (mm)
+1. **제품 형상 (product_type)** - 가장 중요!
+   - "square_pipe", "round_pipe", "angle", "flat_bar", "round_bar", "channel" 중 하나
+   - 형상 키워드: "원파이프", "사각파이프", "앵글", "평철", "환봉", "찬넬"
 
-2. round_pipe (원파이프):
-   - diameter: 지름 (mm)
-   - thickness: 두께 (mm)
+2. **제품 치수** - 형상에 따라 필수!
+   - square_pipe: width(폭), height(높이), thickness(두께) - 예: "40x40x2t"
+   - round_pipe: diameter(지름), thickness(두께) - 예: "50x2t", "Ø50x2t"
+   - angle: width_a(폭A), width_b(폭B), thickness(두께) - 예: "40x40x3t"
+   - flat_bar: width(폭), thickness(두께) - 예: "100x5t"
+   - round_bar: diameter(지름) - 예: "Ø20"
+   - channel: channel_width(플랜지폭), channel_height(웹높이), thickness(두께)
 
-3. angle (앵글):
-   - width_a: 폭 A (mm)
-   - width_b: 폭 B (mm)
-   - thickness: 두께 (mm)
+3. **길이 (length_m)** - 필수!
+   - m 단위, 소수점 가능
+   - 예: "3m", "2.5m", "6M"
+   - 명시 없으면 에러
 
-4. flat_bar (평철):
-   - width: 폭 (mm)
-   - thickness: 두께 (mm)
+4. **수량 (quantity)** - 필수!
+   - 개수 (정수)
+   - 예: "5개", "10개", "1개"
+   - 명시 없으면 에러
 
-5. round_bar (환봉):
-   - diameter: 지름 (mm)
+5. **비중 (density)** - 필수!
+   - g/cm³ 단위
+   - 예: "비중 2.8", "2.7"
+   - 명시 없으면 에러
 
-6. channel (찬넬):
-   - channel_height: 웹 높이 (mm)
-   - channel_width: 플랜지 폭 (mm)
-   - thickness: 두께 (mm)
+6. **kg당 단가 (price_per_kg)** - 선택!
+   - 원 단위
+   - 예: "kg당 6000원", "단가 7000"
+   - 명시 없으면 None (중량만 계산)
 
-**선택 필드:**
-- quantity: 수량 (개, 기본값: 1)
-- density: 비중 (g/cm³, 기본값: 2.8)
-- price_per_kg: kg당 단가 (원, 기본값: 6000)
+**⚠️ 중요 파싱 규칙:**
 
-**파싱 규칙:**
-1. 형상 키워드 인식:
-   - "사각파이프", "사각", "각파이프" → square_pipe
-   - "원파이프", "원", "둥근파이프" → round_pipe
-   - "앵글", "ㄱ자", "L형" → angle
+1. **절대 기본값 사용 금지!**
+   - 형상, 치수, 길이, 수량, 비중이 명시되지 않은 경우
+   - 절대 추측하거나 기본값(1, 2.8 등) 사용 금지
+   - 누락된 필수 필드는 None 또는 0으로 설정하여 validation 에러 발생시킴
+   - kg당 단가는 선택 사항이므로 없으면 None으로 설정 (에러 아님)
+
+2. **형상 키워드 인식** (최우선!):
+   - "원", "원파이프" → round_pipe
+   - "사각", "사각파이프" → square_pipe
+   - "앵글", "ㄱ자" → angle
    - "평철", "평판" → flat_bar
-   - "환봉", "둥근봉", "원봉" → round_bar
-   - "찬넬", "C형강", "채널" → channel
+   - "환봉", "둥근봉" → round_bar
+   - "찬넬", "채널" → channel
 
-2. 치수 표기 인식:
-   - "40x40x2t" → width=40, height=40, thickness=2
-   - "50x2t" → diameter=50, thickness=2
-   - "Ø20" → diameter=20
-   - "100x5t" → width=100, thickness=5
+3. **치수 표기 인식** (최우선!):
+   - "40x40x2t" → 사각: width=40, height=40, thickness=2
+   - "50x2t" → 원: diameter=50, thickness=2
+   - "Ø40x3t" → 원: diameter=40, thickness=3
+   - "100x5t" → 평철: width=100, thickness=5
 
-3. 길이 단위:
-   - "3m", "3M" → 3.0
-   - "2.5m" → 2.5
+**파싱 예시:**
 
-4. 수량:
-   - "5개", "/5개", "x5" → quantity=5
-   - 명시 없으면 quantity=1
+✅ 완벽한 예시 (가격 계산):
+- "원 지름40 두께3 길이3m 수량5개 비중2.8 단가6000"
+  → product_type="round_pipe", diameter=40, thickness=3, length_m=3, quantity=5, density=2.8, price_per_kg=6000
 
-5. 단가 정보:
-   - "비중 2.8" → density=2.8
-   - "kg당 7000원" → price_per_kg=7000
-   - 명시 없으면 기본값 사용
+- "사각파이프 40x40x2t - 3m / 5개, 비중 2.8, kg당 6000원"
+  → product_type="square_pipe", width=40, height=40, thickness=2, length_m=3, quantity=5, density=2.8, price_per_kg=6000
 
-**예시:**
-- 입력: "사각파이프 40x40x2t - 3m / 5개"
-  → product_type="square_pipe", width=40, height=40, thickness=2, length_m=3, quantity=5
+✅ 중량만 계산 (단가 없음):
+- "원 지름40 두께3 길이3m 수량5개 비중2.8"
+  → product_type="round_pipe", diameter=40, thickness=3, length_m=3, quantity=5, density=2.8, price_per_kg=None
 
-- 입력: "원 파이프 50x2t - 5m, 비중 2.8, kg당 6300원"
-  → product_type="round_pipe", diameter=50, thickness=2, length_m=5, density=2.8, price_per_kg=6300
-
-- 입력: "앵글 40x40x3 - 3m, kg당 7000원"
-  → product_type="angle", width_a=40, width_b=40, thickness=3, length_m=3, price_per_kg=7000
+❌ 불완전한 예시 (에러 발생시켜야 함):
+- "원 지름40 두께3 비중2.8" → length_m=None, quantity=None (에러!)
+- "사각 40x40x2t 3m" → quantity=None, density=None (에러!)
 
 **신뢰도 판단:**
-- 형상과 모든 필수 치수 명확: 1.0
-- 일부 치수 불명확: 0.7~0.9
-- 형상이나 치수 추측 필요: 0.5 이하
+- 형상, 치수, 모든 필수 필드 명확: 1.0
+- 일부 필드만 명확: 0.5 이하 (validation에서 에러 발생)
 """
 
         self.agent = create_agent(
@@ -421,6 +419,13 @@ class AluminumCalculationParser:
                 return calc_info, False, "제품 형상이 누락되었습니다."
             if not calc_info.length_m or calc_info.length_m <= 0:
                 return calc_info, False, "길이가 누락되었습니다."
+
+            # 필수 필드 검증 (수량, 비중)
+            if not calc_info.quantity or calc_info.quantity <= 0:
+                return calc_info, False, "수량이 누락되었습니다."
+            if not calc_info.density or calc_info.density <= 0:
+                return calc_info, False, "비중이 누락되었습니다."
+            # price_per_kg는 선택 사항이므로 검증하지 않음
 
             # 형상별 치수 검증
             if calc_info.product_type == "square_pipe":

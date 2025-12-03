@@ -118,10 +118,12 @@ class AluminumCalculationInfo(BaseModel):
     channel_height: Optional[float] = Field(None, description="찬넬 웹 높이 (mm)")
     channel_width: Optional[float] = Field(None, description="찬넬 플랜지 폭 (mm)")
     
+    # 필수 정보
+    quantity: int = Field(description="수량")
+    density: float = Field(description="비중")
+
     # 선택 정보
-    quantity: int = Field(1, description="수량")
-    density: float = Field(2.8, description="비중")
-    price_per_kg: int = Field(6000, description="kg당 단가")
+    price_per_kg: Optional[int] = Field(None, description="kg당 단가 (선택, 없으면 중량만 계산)")
     
     confidence: Optional[float] = Field(None, description="파싱 신뢰도 (0.0~1.0)")
     notes: Optional[str] = Field(None, description="추가 메모")
