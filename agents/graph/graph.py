@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 from langchain_core.messages import HumanMessage, AIMessage
 
 # Langfuse 통합
@@ -119,17 +120,7 @@ class OfficeAutomationGraph:
         # 엣지 연결
         workflow.set_entry_point("classify_intent")
 
-        # classify_intent 후: 시나리오별 라우팅
-        workflow.add_conditional_edges(
-            "classify_intent",
-            self._route_by_scenario,
-            {
-                "help": "help",
-                "delivery": "delivery_subgraph",
-                "product_order": "product_subgraph",
-                "aluminum_calculation": "aluminum_subgraph",
-            }
-        )
+        # classify_intent 노드에서 Command로 라우팅하므로 conditional_edges 불필요
 
         # 각 노드 → END
         workflow.add_edge("help", END)
@@ -144,7 +135,7 @@ class OfficeAutomationGraph:
     # 노드 함수들
     # ========================================================================
 
-    def _classify_intent_node(self, state: OfficeAutomationState) -> Dict[str, Any]:
+    def _classify_intent_node(self, state: OfficeAutomationState) -> Command[str]:
         """
         의도 분류 노드 (멀티턴 지원)
 
@@ -154,16 +145,29 @@ class OfficeAutomationGraph:
             state: 현재 상태
 
         Returns:
-            업데이트된 상태 (scenario, confidence)
+            Command with goto 및 업데이트된 상태
         """
+        # 라우팅 맵 정의
+        route_map = {
+            "help": "help",
+            "delivery": "delivery_subgraph",
+            "product_order": "product_subgraph",
+            "aluminum_calculation": "aluminum_subgraph",
+        }
+
         # 멀티턴 대화: active_scenario가 있으면 그대로 유지
         active_scenario = state.get("active_scenario")
         if active_scenario:
             print(f"[🔒] Active scenario locked: {active_scenario} (multi-turn mode)")
-            return {
-                "scenario": active_scenario,
-                "confidence": 1.0  # Active scenario는 100% 신뢰도
-            }
+            next_node = route_map.get(active_scenario, "help")
+            print(f"[🧭] Routing to: {next_node}")
+            return Command(
+                goto=next_node,
+                update={
+                    "scenario": active_scenario,
+                    "confidence": 1.0  # Active scenario는 100% 신뢰도
+                }
+            )
 
         # active_scenario가 없으면 새로운 의도 분류
         raw_input = state.get("raw_input", "")
@@ -172,24 +176,16 @@ class OfficeAutomationGraph:
         intent = self.intent_classifier.classify(raw_input)
         print(f"[🎯] Intent: {intent.scenario} (confidence: {intent.confidence:.2f})")
 
-        return {
-            "scenario": intent.scenario,
-            "confidence": intent.confidence
-        }
+        next_node = route_map.get(intent.scenario, "help")
+        print(f"[🧭] Routing to: {next_node}")
 
-    def _route_by_scenario(self, state: OfficeAutomationState) -> str:
-        """
-        시나리오별 라우팅 함수
-
-        Args:
-            state: 현재 상태
-
-        Returns:
-            다음 노드 이름
-        """
-        scenario = state.get("scenario")
-        print(f"[🧭] Routing to: {scenario}")
-        return scenario
+        return Command(
+            goto=next_node,
+            update={
+                "scenario": intent.scenario,
+                "confidence": intent.confidence
+            }
+        )
 
     def _help_node(self, state: OfficeAutomationState) -> Dict[str, Any]:
         """
