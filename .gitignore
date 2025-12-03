@@ -3,7 +3,7 @@
 
 # User requested to ignore all md files
 *.md
-
+!README.md
 # Python
 __pycache__/
 *.pyc
