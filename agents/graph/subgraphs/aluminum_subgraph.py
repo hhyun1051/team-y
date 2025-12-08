@@ -17,7 +17,7 @@ from langgraph.graph import StateGraph, END
 import time
 
 from ..state import OfficeAutomationState
-from ..utils.tools import aluminum_calculator
+from ..utils import aluminum_calculator
 
 
 def create_aluminum_subgraph(parser):
