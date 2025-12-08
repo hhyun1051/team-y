@@ -22,7 +22,9 @@ from langfuse.langchain import CallbackHandler
 # Local imports
 from .state import OfficeAutomationState
 from .utils.intent_classifier import IntentClassifier
-from .utils.parsers import DeliveryParser, ProductOrderParser, AluminumCalculationParser
+from .utils.delivery_parser import DeliveryParser
+from .utils.product_parser import ProductOrderParser
+from .utils.aluminum_parser import AluminumCalculationParser
 from .utils.document_generator import DocumentGenerator
 from .subgraphs import create_delivery_subgraph, create_product_subgraph, create_aluminum_subgraph
 

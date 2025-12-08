@@ -12,7 +12,8 @@ from .state import (
     ProductOrderInfo,
 )
 from .utils.intent_classifier import IntentClassifier
-from .utils.parsers import DeliveryParser, ProductOrderParser
+from .utils.delivery_parser import DeliveryParser
+from .utils.product_parser import ProductOrderParser
 from .utils.document_generator import DocumentGenerator
 
 
