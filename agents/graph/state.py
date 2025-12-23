@@ -43,6 +43,7 @@ class OfficeAutomationState(TypedDict):
     # 문서 생성 결과
     docx_path: Optional[str]  # DOCX 파일 경로
     pdf_path: Optional[str]  # PDF 파일 경로
+    image_paths: Optional[list]  # 이미지 파일 경로 리스트 (PNG)
 
     # 워크플로우 제어
     current_step: Literal[

@@ -26,6 +26,10 @@ python-pptx>=0.6.21
 # PDF Conversion (LibreOffice headless required on system)
 # sudo apt-get install libreoffice
 
+# PDF to Image Conversion
+pdf2image>=1.16.0
+Pillow>=10.0.0
+
 # Environment Variables
 python-dotenv>=1.0.0
 

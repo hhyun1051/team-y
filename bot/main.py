@@ -126,11 +126,17 @@ class ApprovalView(discord.ui.View):
             # 최종 메시지 전송 및 PDF 파일 추출
             message_content = ""
             pdf_path = None
+            image_paths = []
 
             # PDF 경로를 result에서 직접 가져오기 (더 신뢰성 있음)
             if "pdf_path" in result and result["pdf_path"]:
                 pdf_path = Path(result["pdf_path"])
                 print(f"[📄] Found PDF path in result: {pdf_path}")
+
+            # 이미지 경로 가져오기
+            if "image_paths" in result and result["image_paths"]:
+                image_paths = [Path(p) for p in result["image_paths"]]
+                print(f"[🖼️] Found {len(image_paths)} image(s) in result")
 
             if "messages" in result and result["messages"]:
                 latest_msg = result["messages"][-1]
@@ -146,6 +152,15 @@ class ApprovalView(discord.ui.View):
                     await interaction.channel.send("✅ 처리 완료")
             else:
                 await interaction.channel.send("✅ 처리 완료")
+
+            # 이미지 파일 전송 (미리보기)
+            if image_paths:
+                for img_path in image_paths:
+                    if img_path.exists():
+                        print(f"[📤] Sending image file: {img_path}")
+                        await interaction.channel.send(file=discord.File(str(img_path)))
+                    else:
+                        print(f"[⚠️] Image file not found: {img_path}")
 
             # PDF 파일 전송
             if pdf_path and pdf_path.exists():
@@ -327,6 +342,14 @@ class EditModal(discord.ui.Modal, title="정보 편집"):
 
             # 결과 전송
             await interaction.channel.send(message)
+
+            # 이미지 파일 전송 (미리보기)
+            if 'images' in result and result['images']:
+                image_paths = [Path(p) for p in result['images']]
+                for img_path in image_paths:
+                    if img_path.exists():
+                        print(f"[📤] Sending image file: {img_path}")
+                        await interaction.channel.send(file=discord.File(str(img_path)))
 
             # PDF 파일 전송
             if pdf_path and pdf_path.exists():
@@ -666,6 +689,14 @@ async def handle_text_message(message: discord.Message):
                 await processing_msg.edit(content="✅ 처리 완료")
         else:
             await processing_msg.edit(content="✅ 처리 완료")
+
+        # 이미지 파일 전송 (미리보기)
+        if result.get("image_paths"):
+            image_paths = [Path(p) for p in result["image_paths"]]
+            for img_path in image_paths:
+                if img_path.exists():
+                    print(f"[📤] Sending image file: {img_path}")
+                    await message.channel.send(file=discord.File(str(img_path)))
 
         # PDF 파일 전송
         if result.get("pdf_path"):

@@ -253,6 +253,7 @@ def _generate_product(state: OfficeAutomationState, document_generator) -> Dict[
         return {
             "pdf_path": result["pdf"],
             "docx_path": result["docx"],
+            "image_paths": result.get("images", []),
             "messages": [AIMessage(content=success_msg)]
         }
 

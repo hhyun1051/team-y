@@ -7,8 +7,9 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 from docx import Document
+from pdf2image import convert_from_path
 
 
 class DocumentGenerator:
@@ -108,6 +109,51 @@ class DocumentGenerator:
         print(f"[✅] PDF generated: {pdf_path}")
         return pdf_path
 
+    @staticmethod
+    def convert_to_images(pdf_path: Path, output_dir: Path = None, dpi: int = 150) -> List[Path]:
+        """
+        PDF를 이미지(PNG)로 변환
+
+        Args:
+            pdf_path: 입력 PDF 파일 경로
+            output_dir: 출력 디렉토리 (None이면 PDF와 같은 디렉토리)
+            dpi: 이미지 해상도 (기본값: 150, 높을수록 선명하지만 파일 크기 증가)
+
+        Returns:
+            생성된 이미지 파일 경로 리스트
+        """
+        if output_dir is None:
+            output_dir = pdf_path.parent
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"[🔄] Converting PDF to images: {pdf_path.name}")
+
+        try:
+            # PDF를 이미지로 변환 (pdf2image 사용)
+            images = convert_from_path(
+                str(pdf_path),
+                dpi=dpi,
+                fmt='png',
+                thread_count=2
+            )
+
+            image_paths = []
+            base_name = pdf_path.stem
+
+            for i, image in enumerate(images, start=1):
+                # 이미지 파일명: <base_name>_page_<번호>.png
+                image_path = output_dir / f"{base_name}_page_{i}.png"
+                image.save(str(image_path), 'PNG')
+                image_paths.append(image_path)
+                print(f"[✅] Image generated: {image_path.name}")
+
+            return image_paths
+
+        except Exception as e:
+            print(f"[❌] Image conversion failed: {str(e)}")
+            return []
+
     @classmethod
     def generate_delivery_document(
         cls,
@@ -136,7 +182,7 @@ class DocumentGenerator:
             notes: 비고 (선택)
 
         Returns:
-            {"docx": Path, "pdf": Path}
+            {"docx": Path, "pdf": Path, "images": List[Path]}
         """
         template_path = cls.TEMPLATE_DIR / "deliver_template_new.docx"
 
@@ -171,7 +217,10 @@ class DocumentGenerator:
         # PDF 변환
         cls.convert_to_pdf(docx_path, pdf_path)
 
-        return {"docx": docx_path, "pdf": pdf_path}
+        # 이미지 생성
+        image_paths = cls.convert_to_images(pdf_path)
+
+        return {"docx": docx_path, "pdf": pdf_path, "images": image_paths}
 
     @classmethod
     def generate_product_order_document(
@@ -191,7 +240,7 @@ class DocumentGenerator:
             unit_price: 단가
 
         Returns:
-            {"docx": Path, "pdf": Path}
+            {"docx": Path, "pdf": Path, "images": List[Path]}
         """
         template_path = cls.TEMPLATE_DIR / "product_order_template.docx"
 
@@ -219,4 +268,7 @@ class DocumentGenerator:
         # PDF 변환
         cls.convert_to_pdf(docx_path, pdf_path)
 
-        return {"docx": docx_path, "pdf": pdf_path}
+        # 이미지 생성
+        image_paths = cls.convert_to_images(pdf_path)
+
+        return {"docx": docx_path, "pdf": pdf_path, "images": image_paths}
