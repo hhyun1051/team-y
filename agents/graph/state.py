@@ -75,7 +75,7 @@ class DeliveryInfo(BaseModel):
     # 하차지 정보 (필수)
     unloading_site: str = Field(description="하차지 (회사 이름)")
     address: str = Field(description="주소 (구체적인 상세 주소)")
-    contact: str = Field(description="연락처 (010-XXXX-XXXX 형식)")
+    contact: str = Field(description="연락처")
 
     # 상차지 정보 (선택, 기본값: 유진알루미늄)
     loading_site: str = Field(default="유진알루미늄", description="상차지")
