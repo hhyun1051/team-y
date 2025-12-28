@@ -31,3 +31,4 @@ coverage.xml
 # System
 .DS_Store
 Thumbs.db
+hp_printer.py
