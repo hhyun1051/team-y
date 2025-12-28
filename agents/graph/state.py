@@ -40,6 +40,12 @@ class OfficeAutomationState(TypedDict):
     approval_message: Optional[str]  # 사용자에게 보여줄 승인 요청 메시지
     reject_message: Optional[str]  # 거절 시 사용자 메시지
 
+    # 인쇄 HITL 상태
+    awaiting_print_approval: bool  # 인쇄 승인 대기 중
+    print_approval_decision: Optional[Literal["approve", "reject"]]  # 인쇄 승인 결정
+    print_approval_message: Optional[str]  # 인쇄 승인 요청 메시지
+    print_status: Optional[Literal["success", "failed", "error"]]  # 인쇄 상태
+
     # 문서 생성 결과
     docx_path: Optional[str]  # DOCX 파일 경로
     pdf_path: Optional[str]  # PDF 파일 경로

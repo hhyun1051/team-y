@@ -5,11 +5,18 @@ Handles DOCX template filling and PDF conversion using LibreOffice
 """
 import os
 import subprocess
+import smtplib
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from docx import Document
 from pdf2image import convert_from_path
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from dotenv import load_dotenv
+
+# 환경 변수 로드
+load_dotenv()
 
 
 class DocumentGenerator:
@@ -17,6 +24,13 @@ class DocumentGenerator:
 
     TEMPLATE_DIR = Path("/root/team-y/templates")
     OUTPUT_DIR = Path("/tmp")
+
+    # HP ePrint 설정 (환경 변수에서 로드)
+    HP_PRINTER_EMAIL = os.getenv("HP_PRINTER_EMAIL")
+    HP_SENDER_EMAIL = os.getenv("HP_SENDER_EMAIL")
+    HP_SENDER_PASSWORD = os.getenv("HP_SENDER_PASSWORD")
+    HP_SMTP_SERVER = os.getenv("HP_SMTP_SERVER", "smtp.gmail.com")
+    HP_SMTP_PORT = int(os.getenv("HP_SMTP_PORT", "587"))
 
     @staticmethod
     def fill_template(template_path: Path, replacements: Dict[str, str], output_path: Path) -> Path:
@@ -155,6 +169,126 @@ class DocumentGenerator:
             return []
 
     @classmethod
+    def print_pdf_to_hp(cls, pdf_path: Path, subject: str = "Print Document") -> bool:
+        """
+        HP ePrint를 사용하여 PDF를 프린터로 전송
+
+        Args:
+            pdf_path: 인쇄할 PDF 파일 경로
+            subject: 이메일 제목 (기본값: "Print Document")
+
+        Returns:
+            성공 여부 (True/False)
+        """
+        # 프린터 설정 확인
+        if not cls.HP_PRINTER_EMAIL or not cls.HP_SENDER_EMAIL or not cls.HP_SENDER_PASSWORD:
+            print(f"[⚠️] HP ePrint not configured. Skipping print.")
+            print(f"[ℹ️] Please set HP_PRINTER_EMAIL, HP_SENDER_EMAIL, HP_SENDER_PASSWORD in .env")
+            return False
+
+        # 파일 존재 확인
+        if not pdf_path.exists():
+            print(f"[❌] PDF file not found: {pdf_path}")
+            return False
+
+        try:
+            print(f"[🖨️] Sending PDF to HP ePrint: {pdf_path.name}")
+
+            # 이메일 메시지 생성
+            msg = MIMEMultipart()
+            msg['From'] = cls.HP_SENDER_EMAIL
+            msg['To'] = cls.HP_PRINTER_EMAIL
+            msg['Subject'] = subject
+
+            # PDF 첨부
+            with open(pdf_path, 'rb') as f:
+                attachment = MIMEApplication(f.read(), _subtype='pdf')
+                attachment.add_header(
+                    'Content-Disposition',
+                    'attachment',
+                    filename=pdf_path.name
+                )
+                msg.attach(attachment)
+
+            # SMTP로 전송
+            with smtplib.SMTP(cls.HP_SMTP_SERVER, cls.HP_SMTP_PORT) as server:
+                server.starttls()
+                server.login(cls.HP_SENDER_EMAIL, cls.HP_SENDER_PASSWORD)
+                server.send_message(msg)
+
+            print(f"[✅] PDF sent to printer successfully: {pdf_path.name}")
+            return True
+
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"[❌] SMTP Authentication failed: {e}")
+            print(f"[ℹ️] Please check HP_SENDER_EMAIL and HP_SENDER_PASSWORD")
+            return False
+        except smtplib.SMTPException as e:
+            print(f"[❌] SMTP error: {e}")
+            return False
+        except Exception as e:
+            print(f"[❌] Failed to send PDF to printer: {e}")
+            return False
+
+    @classmethod
+    def print_pdfs_to_hp(cls, pdf_paths: List[Path], subject: str = "Print Documents") -> bool:
+        """
+        여러 PDF를 HP ePrint로 일괄 전송
+
+        Args:
+            pdf_paths: 인쇄할 PDF 파일 경로 리스트
+            subject: 이메일 제목
+
+        Returns:
+            성공 여부 (True/False)
+        """
+        # 프린터 설정 확인
+        if not cls.HP_PRINTER_EMAIL or not cls.HP_SENDER_EMAIL or not cls.HP_SENDER_PASSWORD:
+            print(f"[⚠️] HP ePrint not configured. Skipping print.")
+            return False
+
+        try:
+            print(f"[🖨️] Sending {len(pdf_paths)} PDF(s) to HP ePrint...")
+
+            # 이메일 메시지 생성
+            msg = MIMEMultipart()
+            msg['From'] = cls.HP_SENDER_EMAIL
+            msg['To'] = cls.HP_PRINTER_EMAIL
+            msg['Subject'] = subject
+
+            # PDF 첨부
+            count = 0
+            for pdf_path in pdf_paths:
+                if pdf_path.exists():
+                    with open(pdf_path, 'rb') as f:
+                        attachment = MIMEApplication(f.read(), _subtype='pdf')
+                        attachment.add_header(
+                            'Content-Disposition',
+                            'attachment',
+                            filename=pdf_path.name
+                        )
+                        msg.attach(attachment)
+                        count += 1
+                        print(f"[📎] Attached: {pdf_path.name}")
+
+            if count == 0:
+                print(f"[⚠️] No valid PDF files to print")
+                return False
+
+            # SMTP로 전송
+            with smtplib.SMTP(cls.HP_SMTP_SERVER, cls.HP_SMTP_PORT) as server:
+                server.starttls()
+                server.login(cls.HP_SENDER_EMAIL, cls.HP_SENDER_PASSWORD)
+                server.send_message(msg)
+
+            print(f"[✅] {count} PDF(s) sent to printer successfully")
+            return True
+
+        except Exception as e:
+            print(f"[❌] Failed to send PDFs to printer: {e}")
+            return False
+
+    @classmethod
     def generate_delivery_document(
         cls,
         unloading_site: str,
@@ -165,8 +299,9 @@ class DocumentGenerator:
         loading_address: str = None,
         loading_phone: str = None,
         freight_cost: int = None,
-        notes: str = None
-    ) -> Dict[str, Path]:
+        notes: str = None,
+        auto_print: bool = False
+    ) -> Dict[str, Any]:
         """
         운송장 문서 생성 (DOCX + PDF)
 
@@ -180,9 +315,10 @@ class DocumentGenerator:
             loading_phone: 상차지 전화번호 (선택)
             freight_cost: 운송비 (착불일 경우에만, 원 단위)
             notes: 비고 (선택)
+            auto_print: HP ePrint 자동 인쇄 여부 (기본값: False)
 
         Returns:
-            {"docx": Path, "pdf": Path, "images": List[Path]}
+            {"docx": Path, "pdf": Path, "images": List[Path], "printed": bool}
         """
         template_path = cls.TEMPLATE_DIR / "deliver_template_new.docx"
 
@@ -220,7 +356,21 @@ class DocumentGenerator:
         # 이미지 생성
         image_paths = cls.convert_to_images(pdf_path)
 
-        return {"docx": docx_path, "pdf": pdf_path, "images": image_paths}
+        # 자동 인쇄 (옵션)
+        printed = False
+        if auto_print:
+            print(f"[🖨️] Auto-printing enabled for delivery document")
+            printed = cls.print_pdf_to_hp(
+                pdf_path,
+                subject=f"운송장 - {unloading_site} ({timestamp})"
+            )
+
+        return {
+            "docx": docx_path,
+            "pdf": pdf_path,
+            "images": image_paths,
+            "printed": printed
+        }
 
     @classmethod
     def generate_product_order_document(
@@ -228,8 +378,9 @@ class DocumentGenerator:
         client: str,
         product_name: str,
         quantity: int,
-        unit_price: int
-    ) -> Dict[str, Path]:
+        unit_price: int,
+        auto_print: bool = False
+    ) -> Dict[str, Any]:
         """
         제품 주문 문서 생성 (DOCX + PDF)
 
@@ -238,9 +389,10 @@ class DocumentGenerator:
             product_name: 품목
             quantity: 수량
             unit_price: 단가
+            auto_print: HP ePrint 자동 인쇄 여부 (기본값: False)
 
         Returns:
-            {"docx": Path, "pdf": Path, "images": List[Path]}
+            {"docx": Path, "pdf": Path, "images": List[Path], "printed": bool}
         """
         template_path = cls.TEMPLATE_DIR / "product_order_template.docx"
 
@@ -271,4 +423,18 @@ class DocumentGenerator:
         # 이미지 생성
         image_paths = cls.convert_to_images(pdf_path)
 
-        return {"docx": docx_path, "pdf": pdf_path, "images": image_paths}
+        # 자동 인쇄 (옵션)
+        printed = False
+        if auto_print:
+            print(f"[🖨️] Auto-printing enabled for product order document")
+            printed = cls.print_pdf_to_hp(
+                pdf_path,
+                subject=f"거래명세서 - {client} ({timestamp})"
+            )
+
+        return {
+            "docx": docx_path,
+            "pdf": pdf_path,
+            "images": image_paths,
+            "printed": printed
+        }

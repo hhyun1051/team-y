@@ -251,9 +251,9 @@ def _generate_product(state: OfficeAutomationState, document_generator) -> Dict[
 - **합계: {total_price:,}원**"""
 
         return {
-            "pdf_path": result["pdf"],
-            "docx_path": result["docx"],
-            "image_paths": result.get("images", []),
+            "pdf_path": str(result["pdf"]),
+            "docx_path": str(result["docx"]),
+            "image_paths": [str(p) for p in result.get("images", [])],
             "messages": [AIMessage(content=success_msg)]
         }
 

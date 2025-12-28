@@ -118,10 +118,79 @@ class ApprovalView(discord.ui.View):
                 active_sessions.pop(self.thread_id, None)
                 return
 
-            # 세션 정리
-            active_sessions.pop(self.thread_id, None)
-
             print(f"[🔍] Resume result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}", flush=True)
+
+            # 추가 interrupt 체크 (인쇄 승인)
+            state_after_resume = workflow_graph.get_state(thread_id=self.thread_id)
+            print(f"[🔍] state_after_resume: next={state_after_resume.next if state_after_resume else None}")
+
+            if state_after_resume and state_after_resume.next:
+                print(f"[⏸️] Another interrupt detected after resume: next={state_after_resume.next}")
+                print(f"[🔍] Tasks count: {len(state_after_resume.tasks) if state_after_resume.tasks else 0}")
+
+                # Subgraph state 접근
+                subgraph_state_values = None
+                if state_after_resume.tasks and len(state_after_resume.tasks) > 0:
+                    task = state_after_resume.tasks[0]
+                    print(f"[🔍] Task name: {task.name}, has state: {task.state is not None}")
+
+                    if task.state:
+                        try:
+                            subgraph_state = workflow_graph.graph.get_state(task.state)
+                            print(f"[🔍] Subgraph state retrieved: {subgraph_state is not None}")
+
+                            if subgraph_state and subgraph_state.values:
+                                subgraph_state_values = subgraph_state.values
+                                print(f"[✅] Subgraph state after resume: {list(subgraph_state_values.keys())}")
+                                print(f"[🔍] pdf_path in subgraph: {subgraph_state_values.get('pdf_path')}")
+                                print(f"[🔍] image_paths in subgraph: {len(subgraph_state_values.get('image_paths', []))} images")
+                        except Exception as e:
+                            print(f"[⚠️] Failed to get subgraph state: {e}")
+                            import traceback
+                            traceback.print_exc()
+
+                # 인쇄 승인 체크
+                if subgraph_state_values and subgraph_state_values.get("awaiting_print_approval"):
+                    print(f"[🖨️] Print approval interrupt detected")
+                    approval_msg = subgraph_state_values.get("print_approval_message", "🖨️ 인쇄하시겠습니까?")
+
+                    # PrintApprovalView 표시
+                    print_view = PrintApprovalView(thread_id=self.thread_id)
+                    active_sessions[self.thread_id] = True
+
+                    # 먼저 문서 생성 메시지와 파일 전송
+                    if "messages" in result and result["messages"]:
+                        latest_msg = result["messages"][-1]
+                        if isinstance(latest_msg, dict):
+                            message_content = latest_msg.get("content", "")
+                        else:
+                            message_content = getattr(latest_msg, "content", "")
+
+                        if message_content:
+                            await interaction.channel.send(message_content)
+
+                    # 이미지 파일 전송 (subgraph state에서)
+                    if subgraph_state_values.get("image_paths"):
+                        image_paths = [Path(p) for p in subgraph_state_values["image_paths"]]
+                        for img_path in image_paths:
+                            if img_path.exists():
+                                print(f"[📤] Sending image file: {img_path}")
+                                await interaction.channel.send(file=discord.File(str(img_path)))
+
+                    # PDF 파일 전송 (subgraph state에서)
+                    if subgraph_state_values.get("pdf_path"):
+                        pdf_path = Path(subgraph_state_values["pdf_path"])
+                        if pdf_path.exists():
+                            print(f"[📤] Sending PDF file: {pdf_path}")
+                            await interaction.channel.send(file=discord.File(str(pdf_path)))
+
+                    # 인쇄 승인 UI 표시
+                    await interaction.channel.send(approval_msg, view=print_view)
+                    print(f"[✅] Print approval request sent")
+                    return
+
+            # 세션 정리 (더 이상 interrupt 없음)
+            active_sessions.pop(self.thread_id, None)
 
             # 최종 메시지 전송 및 PDF 파일 추출
             message_content = ""
@@ -365,6 +434,101 @@ class EditModal(discord.ui.Modal, title="정보 편집"):
             traceback.print_exc()
 
 
+class PrintApprovalView(discord.ui.View):
+    """인쇄 승인/거절 버튼 UI"""
+
+    def __init__(self, thread_id: str, timeout: float = 300):
+        super().__init__(timeout=timeout)
+        self.thread_id = thread_id
+        self.decision = None
+
+    @discord.ui.button(label="🖨️ 인쇄", style=discord.ButtonStyle.success, custom_id="print_approve")
+    async def print_approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """인쇄 승인 버튼"""
+        self.decision = "approve"
+
+        # 버튼 비활성화
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send("🖨️ 인쇄 요청 중...", ephemeral=False)
+
+        # 워크플로우 재개 (print_approval_decision)
+        await self._resume_print_workflow(interaction, "approve")
+
+    @discord.ui.button(label="🚫 인쇄 안함", style=discord.ButtonStyle.secondary, custom_id="print_reject")
+    async def print_reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """인쇄 거절 버튼"""
+        self.decision = "reject"
+
+        # 버튼 비활성화
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send("🚫 인쇄를 건너뜁니다.", ephemeral=False)
+
+        # 워크플로우 재개 (print_approval_decision)
+        await self._resume_print_workflow(interaction, "reject")
+
+    async def _resume_print_workflow(
+        self,
+        interaction: discord.Interaction,
+        decision_type: str
+    ):
+        """인쇄 승인 워크플로우 재개"""
+        global workflow_graph
+
+        try:
+            loop = asyncio.get_event_loop()
+            print(f"[🔄] Calling resume with print_approval_decision={decision_type}", flush=True)
+
+            # resume 호출 (print_approval_decision 파라미터 전달)
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: workflow_graph.resume(
+                        decision_type=decision_type,
+                        reject_message=None,
+                        thread_id=self.thread_id,
+                        is_print_approval=True  # 인쇄 승인임을 표시
+                    )
+                ),
+                timeout=120.0
+            )
+
+            print(f"[✅] Print resume completed", flush=True)
+
+            # 세션 정리
+            active_sessions.pop(self.thread_id, None)
+
+            # 최종 메시지 전송
+            if "messages" in result and result["messages"]:
+                latest_msg = result["messages"][-1]
+                if isinstance(latest_msg, dict):
+                    content = latest_msg.get("content", "")
+                else:
+                    content = getattr(latest_msg, "content", "")
+
+                if content:
+                    await interaction.channel.send(content)
+                else:
+                    await interaction.channel.send("✅ 처리 완료")
+            else:
+                await interaction.channel.send("✅ 처리 완료")
+
+        except asyncio.TimeoutError:
+            print(f"[⏰] Print resume timed out!", flush=True)
+            await interaction.channel.send("⏰ 인쇄 처리 시간 초과")
+            active_sessions.pop(self.thread_id, None)
+        except Exception as e:
+            await interaction.channel.send(f"❌ 인쇄 처리 실패: {str(e)}")
+            active_sessions.pop(self.thread_id, None)
+            import traceback
+            traceback.print_exc()
+
+
 @bot.event
 async def on_ready():
     """봇이 준비되면 실행"""
@@ -548,10 +712,35 @@ async def handle_text_message(message: discord.Message):
                         print(f"[⚠️] Failed to get subgraph state: {e}")
 
             # 승인 메시지 가져오기 (subgraph state에서)
+            # 인쇄 승인인지 문서 승인인지 체크
+            is_print_approval = False
+            approval_msg = "승인이 필요합니다"
+
             if subgraph_state_values:
-                approval_msg = subgraph_state_values.get("approval_message", "승인이 필요합니다")
-            else:
-                approval_msg = "승인이 필요합니다"
+                # 인쇄 승인 체크
+                if subgraph_state_values.get("awaiting_print_approval"):
+                    is_print_approval = True
+                    approval_msg = subgraph_state_values.get("print_approval_message", "🖨️ 인쇄하시겠습니까?")
+                    print(f"[🖨️] Print approval detected")
+                # 문서 승인
+                elif subgraph_state_values.get("awaiting_approval"):
+                    approval_msg = subgraph_state_values.get("approval_message", "승인이 필요합니다")
+                    print(f"[📄] Document approval detected")
+
+            # 인쇄 승인인 경우 PrintApprovalView 사용
+            if is_print_approval:
+                view = PrintApprovalView(thread_id=thread_id)
+                active_sessions[thread_id] = True
+
+                try:
+                    await processing_msg.delete()
+                    await message.channel.send(approval_msg, view=view)
+                    print(f"[✅] Print approval request sent")
+                except Exception as e:
+                    print(f"[❌] Failed to send print approval request: {e}")
+                    await message.channel.send(f"❌ 인쇄 승인 요청 전송 실패: {str(e)}")
+
+                return
 
             # 원래 데이터 추출 (delivery_info 또는 product_order_info)
             original_data = {}

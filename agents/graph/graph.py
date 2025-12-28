@@ -340,6 +340,7 @@ class OfficeAutomationGraph:
         decision_type: str,
         reject_message: Optional[str] = None,
         thread_id: str = "default",
+        is_print_approval: bool = False,
     ) -> Dict[str, Any]:
         """
         HITL 승인/거절 후 워크플로우 재개
@@ -348,13 +349,15 @@ class OfficeAutomationGraph:
             decision_type: "approve" 또는 "reject"
             reject_message: reject인 경우 거절 메시지
             thread_id: 스레드 ID
+            is_print_approval: 인쇄 승인 여부 (True면 print_approval_decision 업데이트)
 
         Returns:
             Graph 실행 결과
         """
         config = {"configurable": {"thread_id": thread_id}}
 
-        print(f"[🔄] Resuming graph with decision={decision_type}, thread_id={thread_id}...")
+        approval_type = "print_approval" if is_print_approval else "document_approval"
+        print(f"[🔄] Resuming graph with {approval_type}={decision_type}, thread_id={thread_id}...")
 
         # 현재 상태 가져오기
         state = self.graph.get_state(config)
@@ -368,12 +371,20 @@ class OfficeAutomationGraph:
             print(f"[🔍] Found interrupted task: {task.name}")
 
             # Subgraph의 state 업데이트
-            update_values = {
-                "approval_decision": decision_type,
-                "awaiting_approval": False
-            }
+            if is_print_approval:
+                # 인쇄 승인
+                update_values = {
+                    "print_approval_decision": decision_type,
+                    "awaiting_print_approval": False
+                }
+            else:
+                # 문서 생성 승인
+                update_values = {
+                    "approval_decision": decision_type,
+                    "awaiting_approval": False
+                }
 
-            if decision_type == "reject":
+            if decision_type == "reject" and not is_print_approval:
                 update_values["reject_message"] = reject_message or "사용자가 거절했습니다."
 
             # update_state를 사용하여 subgraph state 업데이트
@@ -386,12 +397,18 @@ class OfficeAutomationGraph:
         else:
             # Main graph interrupt (이 경우는 없어야 함)
             print(f"[⚠️] No tasks found - updating main graph state")
-            updated_values = {
-                "approval_decision": decision_type,
-                "awaiting_approval": False
-            }
+            if is_print_approval:
+                updated_values = {
+                    "print_approval_decision": decision_type,
+                    "awaiting_print_approval": False
+                }
+            else:
+                updated_values = {
+                    "approval_decision": decision_type,
+                    "awaiting_approval": False
+                }
 
-            if decision_type == "reject":
+            if decision_type == "reject" and not is_print_approval:
                 updated_values["reject_message"] = reject_message or "사용자가 거절했습니다."
 
             self.graph.update_state(config, updated_values)

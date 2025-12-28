@@ -6,6 +6,9 @@ Delivery SubGraph - 운송장 생성 워크플로우
 2. format_approval → 승인 메시지 포맷팅
 3. approval (interrupt) → 사용자 승인 대기
 4. generate → 운송장 문서 생성
+5. format_print_approval → 인쇄 승인 메시지 포맷팅
+6. print_approval (interrupt) → 인쇄 승인 대기
+7. print_document → HP ePrint로 인쇄
 """
 
 from typing import Dict, Any
@@ -36,10 +39,16 @@ def create_delivery_subgraph(checkpointer, delivery_parser, document_generator):
     def generate_node(state):
         return _generate_delivery(state, document_generator)
 
+    def print_node(state):
+        return _print_delivery(state, document_generator)
+
     subgraph.add_node("parse", parse_node)
     subgraph.add_node("format_approval", _format_delivery_approval)
     subgraph.add_node("approval", _approval_node)
     subgraph.add_node("generate", generate_node)
+    subgraph.add_node("format_print_approval", _format_print_approval)
+    subgraph.add_node("print_approval", _print_approval_node)
+    subgraph.add_node("print_document", print_node)
     subgraph.add_node("retry", _retry_node)
 
     # 엣지 연결
@@ -71,13 +80,29 @@ def create_delivery_subgraph(checkpointer, delivery_parser, document_generator):
         }
     )
 
-    # generate → END (문서 생성 완료)
-    subgraph.add_edge("generate", END)
+    # generate → format_print_approval (문서 생성 후 인쇄 승인 요청)
+    subgraph.add_edge("generate", "format_print_approval")
 
-    # Compile: approval 노드 전에 interrupt 발생
+    # format_print_approval → print_approval (항상)
+    subgraph.add_edge("format_print_approval", "print_approval")
+
+    # print_approval 후: 승인 → print_document, 거절 → END
+    subgraph.add_conditional_edges(
+        "print_approval",
+        lambda state: "print_document" if state.get("print_approval_decision") == "approve" else END,
+        {
+            "print_document": "print_document",
+            END: END
+        }
+    )
+
+    # print_document → END (인쇄 완료)
+    subgraph.add_edge("print_document", END)
+
+    # Compile: approval과 print_approval 노드 전에 interrupt 발생
     return subgraph.compile(
         checkpointer=checkpointer,
-        interrupt_before=["approval"]
+        interrupt_before=["approval", "print_approval"]
     )
 
 
@@ -266,9 +291,9 @@ def _generate_delivery(state: OfficeAutomationState, document_generator) -> Dict
             success_msg += f"\n- 운송비: {info.freight_cost:,}원"
 
         return {
-            "pdf_path": result["pdf"],
-            "docx_path": result["docx"],
-            "image_paths": result.get("images", []),
+            "pdf_path": str(result["pdf"]),
+            "docx_path": str(result["docx"]),
+            "image_paths": [str(p) for p in result.get("images", [])],
             "messages": [AIMessage(content=success_msg)]
         }
 
@@ -300,3 +325,130 @@ def _retry_node(state: OfficeAutomationState) -> Dict[str, Any]:
     return {
         "messages": [AIMessage(content=retry_message)]
     }
+
+
+def _format_print_approval(state: OfficeAutomationState) -> Dict[str, Any]:
+    """
+    인쇄 승인 메시지 포맷팅 노드
+
+    Args:
+        state: 현재 상태
+
+    Returns:
+        업데이트된 상태 (print_approval_message 포함)
+    """
+    pdf_path = state.get("pdf_path")
+    info = state.get("delivery_info")
+
+    if not pdf_path:
+        return {"print_approval_message": "❌ PDF 파일이 생성되지 않았습니다."}
+
+    print_approval_msg = f"""🖨️ **인쇄 확인**
+
+운송장 PDF가 생성되었습니다.
+HP ePrint로 인쇄하시겠습니까?
+
+📄 파일: `{pdf_path}`
+📍 하차지: {info.unloading_site if info else 'N/A'}
+
+인쇄하려면 **승인**, 인쇄하지 않으려면 **거절**을 선택하세요."""
+
+    print(f"[🖨️] Print approval message formatted")
+
+    return {
+        "print_approval_message": print_approval_msg,
+        "awaiting_print_approval": True
+    }
+
+
+def _print_approval_node(state: OfficeAutomationState) -> Dict[str, Any]:
+    """
+    인쇄 승인 노드 (interrupt 후 재개 지점)
+
+    Args:
+        state: 현재 상태
+
+    Returns:
+        업데이트된 상태
+    """
+    decision = state.get("print_approval_decision")
+    print(f"[🔄] Print approval node: decision={decision}")
+
+    if decision == "approve":
+        print(f"[✅] Print approved - proceeding to print")
+        return {"awaiting_print_approval": False}
+    elif decision == "reject":
+        print(f"[❌] Print rejected - skipping print")
+        return {
+            "awaiting_print_approval": False,
+            "messages": [AIMessage(content="🚫 인쇄가 취소되었습니다.")]
+        }
+    else:
+        print(f"[⚠️] Print approval node reached without decision")
+        return {"awaiting_print_approval": False}
+
+
+def _print_delivery(state: OfficeAutomationState, document_generator) -> Dict[str, Any]:
+    """
+    운송장 인쇄 노드 (HP ePrint)
+
+    Args:
+        state: 현재 상태
+        document_generator: DocumentGenerator 클래스
+
+    Returns:
+        업데이트된 상태 (messages 포함)
+    """
+    from pathlib import Path
+
+    pdf_path = state.get("pdf_path")
+    info = state.get("delivery_info")
+
+    if not pdf_path:
+        return {
+            "messages": [AIMessage(content="❌ 인쇄할 PDF 파일이 없습니다.")]
+        }
+
+    print(f"[🖨️] Printing delivery document to HP ePrint...")
+
+    try:
+        # HP ePrint로 전송
+        success = document_generator.print_pdf_to_hp(
+            Path(pdf_path),
+            subject=f"운송장 - {info.unloading_site if info else 'Unknown'}"
+        )
+
+        if success:
+            success_msg = f"""✅ 인쇄 요청 완료!
+
+🖨️ HP ePrint로 운송장을 전송했습니다.
+📄 파일: `{Path(pdf_path).name}`
+📍 하차지: {info.unloading_site if info else 'N/A'}
+
+잠시 후 프린터에서 출력됩니다."""
+
+            return {
+                "print_status": "success",
+                "messages": [AIMessage(content=success_msg)]
+            }
+        else:
+            fail_msg = f"""⚠️ 인쇄 요청 실패
+
+HP ePrint 설정을 확인해주세요.
+- HP_PRINTER_EMAIL
+- HP_SENDER_EMAIL
+- HP_SENDER_PASSWORD
+
+PDF 파일: `{Path(pdf_path).name}`"""
+
+            return {
+                "print_status": "failed",
+                "messages": [AIMessage(content=fail_msg)]
+            }
+
+    except Exception as e:
+        print(f"[❌] Print failed: {e}")
+        return {
+            "print_status": "error",
+            "messages": [AIMessage(content=f"❌ 인쇄 중 오류 발생: {str(e)}")]
+        }
