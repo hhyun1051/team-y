@@ -51,6 +51,12 @@ class ApprovalView(discord.ui.View):
         self.decision = None
         self.edited_text = None
 
+        # 사업자등록증인 경우 승인 버튼 제거 (편집 필수)
+        scenario = original_data.get("scenario") if original_data else None
+        if scenario == "business_registration":
+            # 승인 버튼 제거 - children에서 찾아서 제거
+            self.remove_item(self.approve_button)
+
     @discord.ui.button(label="✅ 승인", style=discord.ButtonStyle.success, custom_id="approve")
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """승인 버튼"""
@@ -271,6 +277,24 @@ class EditModal(discord.ui.Modal, title="정보 편집"):
         elif 'client' in original_data:
             # Product 정보
             placeholder_text = f"거래처: {original_data.get('client', '')}\n품목: {original_data.get('product_name', '')}\n수량: {original_data.get('quantity', '')}\n단가: {original_data.get('unit_price', '')}"
+        elif 'business_name' in original_data:
+            # Business Registration 정보 (전체 필드)
+            # None 값을 빈 문자열로 변환 (placeholder에서 "None" 문자열 표시 방지)
+            def fmt(val):
+                return val if val is not None else ''
+
+            placeholder_text = f"거래처명: {fmt(original_data.get('client_name'))}\n상호: {fmt(original_data.get('business_name'))}"
+            placeholder_text += f"\n대표자명: {fmt(original_data.get('representative_name'))}\n사업자번호: {fmt(original_data.get('business_number'))}"
+            placeholder_text += f"\n종사업자번호: {fmt(original_data.get('branch_number'))}\n우편번호: {fmt(original_data.get('postal_code'))}"
+            placeholder_text += f"\n주소1: {fmt(original_data.get('address1'))}\n주소2: {fmt(original_data.get('address2'))}"
+            placeholder_text += f"\n업태: {fmt(original_data.get('business_type'))}\n종목: {fmt(original_data.get('business_item'))}"
+            placeholder_text += f"\n전화1: {fmt(original_data.get('phone1'))}\n전화2: {fmt(original_data.get('phone2'))}"
+            placeholder_text += f"\n팩스: {fmt(original_data.get('fax'))}"
+            placeholder_text += f"\n담당자1: {fmt(original_data.get('contact_person1'))}\n휴대폰1: {fmt(original_data.get('mobile1'))}"
+            placeholder_text += f"\n담당자2: {fmt(original_data.get('contact_person2'))}\n휴대폰2: {fmt(original_data.get('mobile2'))}"
+            placeholder_text += f"\n거래처구분: {fmt(original_data.get('client_type'))}\n출고가등급: {fmt(original_data.get('price_grade'))}"
+            placeholder_text += f"\n기초잔액: {original_data.get('initial_balance', 0)}\n적정잔액: {original_data.get('optimal_balance', 0)}"
+            placeholder_text += f"\n메모: {fmt(original_data.get('memo'))}"
         else:
             placeholder_text = "예: 하차지: 삼성전자\n주소: 서울시 강남구\n연락처: 010-1234-5678\n상차지: 유진알루미늄\n지불방법: 착불"
 
@@ -296,6 +320,10 @@ class EditModal(discord.ui.Modal, title="정보 편집"):
         await interaction.response.edit_message(view=self.approval_view)
         await interaction.followup.send(f"🔄 편집된 정보로 처리 중...\n```\n{edited_text}\n```", ephemeral=False)
 
+        # 시나리오 확인 (state에서 이미 기록됨)
+        scenario = self.approval_view.original_data.get("scenario")
+        print(f"[📝] Scenario from original_data: {scenario}")
+
         # 편집된 텍스트 파싱 (간단한 key: value 형식)
         edited_data = {}
         for line in edited_text.split('\n'):
@@ -305,54 +333,172 @@ class EditModal(discord.ui.Modal, title="정보 편집"):
                 key = key.strip().lower()
                 value = value.strip()
 
-                # Delivery 키 매핑 (새 스키마)
-                if '하차지' in key or 'unloading' in key:
-                    edited_data['unloading_site'] = value
-                elif '주소' in key and '상차지' not in key:
-                    edited_data['address'] = value
-                elif '연락처' in key or 'contact' in key:
-                    edited_data['contact'] = value
-                elif '상차지' in key and '주소' not in key and '전화' not in key:
-                    edited_data['loading_site'] = value
-                elif '상차지주소' in key or 'loading_address' in key:
-                    edited_data['loading_address'] = value
-                elif '상차지전화' in key or 'loading_phone' in key:
-                    edited_data['loading_phone'] = value
-                elif '지불방법' in key or 'payment' in key:
-                    if '착불' in value:
-                        edited_data['payment_type'] = '착불'
-                    elif '선불' in value:
-                        edited_data['payment_type'] = '선불'
-                elif '운송비' in key or 'freight' in key:
-                    # 숫자만 추출
-                    numbers = re.findall(r'\d+', value.replace(',', ''))
-                    if numbers:
-                        edited_data['freight_cost'] = int(numbers[0])
-                # Product 키 매핑
-                elif '거래처' in key or 'client' in key:
-                    edited_data['client'] = value
-                elif '품목' in key or 'product' in key:
-                    edited_data['product_name'] = value
-                elif '수량' in key or 'quantity' in key:
-                    # 숫자만 추출
-                    numbers = re.findall(r'\d+', value)
-                    if numbers:
-                        edited_data['quantity'] = int(numbers[0])
-                elif '단가' in key or 'unit_price' in key or 'price' in key:
-                    # 숫자만 추출
-                    numbers = re.findall(r'\d+', value.replace(',', ''))
-                    if numbers:
-                        edited_data['unit_price'] = int(numbers[0])
+                # 빈 값 또는 "None", "N/A" 문자열은 건너뛰기 (원본 값 유지)
+                if not value or value.strip().lower() in ['none', 'n/a']:
+                    continue  # 이 필드는 건너뛰고 원본 값 유지
+
+                # 시나리오별 키 매핑
+                if scenario == "delivery":
+                    # Delivery 키 매핑 (if 문 유지 - 한 라인에 여러 조건 매칭 가능)
+                    if '하차지' in key or 'unloading' in key:
+                        edited_data['unloading_site'] = value
+                    if '주소' in key and '상차지' not in key:
+                        edited_data['address'] = value
+                    if '연락처' in key or 'contact' in key:
+                        edited_data['contact'] = value
+                    if '상차지' in key and '주소' not in key and '전화' not in key:
+                        edited_data['loading_site'] = value
+                    if '상차지주소' in key or 'loading_address' in key:
+                        edited_data['loading_address'] = value
+                    if '상차지전화' in key or 'loading_phone' in key:
+                        edited_data['loading_phone'] = value
+                    if '지불방법' in key or 'payment' in key:
+                        if value and '착불' in value:
+                            edited_data['payment_type'] = '착불'
+                        elif value and '선불' in value:
+                            edited_data['payment_type'] = '선불'
+                    if '운송비' in key or 'freight' in key:
+                        if value:
+                            numbers = re.findall(r'\d+', value.replace(',', ''))
+                            if numbers:
+                                edited_data['freight_cost'] = int(numbers[0])
+
+                elif scenario == "product_order":
+                    # Product 키 매핑
+                    if '거래처' in key or 'client' in key:
+                        edited_data['client'] = value
+                    elif '품목' in key or 'product' in key:
+                        edited_data['product_name'] = value
+                    elif '수량' in key or 'quantity' in key:
+                        if value:
+                            numbers = re.findall(r'\d+', value)
+                            if numbers:
+                                edited_data['quantity'] = int(numbers[0])
+                    elif '단가' in key or 'unit_price' in key or 'price' in key:
+                        if value:
+                            numbers = re.findall(r'\d+', value.replace(',', ''))
+                            if numbers:
+                                edited_data['unit_price'] = int(numbers[0])
+
+                elif scenario == "business_registration":
+                    # Business Registration 키 매핑 (elif로 변경하여 중복 매칭 방지)
+                    if '거래처명' in key or 'client_name' in key:
+                        edited_data['client_name'] = value
+                    elif '상호' in key or 'business_name' in key:
+                        edited_data['business_name'] = value
+                    elif '대표자' in key or 'representative' in key:
+                        edited_data['representative_name'] = value
+                    elif '사업자번호' in key or 'business_number' in key:
+                        edited_data['business_number'] = value
+                    elif '종사업자번호' in key or 'branch_number' in key:
+                        edited_data['branch_number'] = value
+                    elif '우편번호' in key or 'postal' in key:
+                        edited_data['postal_code'] = value
+                    elif '주소1' in key or 'address1' in key:
+                        edited_data['address1'] = value
+                    elif '주소2' in key or 'address2' in key:
+                        edited_data['address2'] = value
+                    elif '업태' in key or 'business_type' in key:
+                        edited_data['business_type'] = value
+                    elif '종목' in key or 'business_item' in key:
+                        edited_data['business_item'] = value
+                    elif '전화1' in key or 'phone1' in key:
+                        edited_data['phone1'] = value
+                    elif '전화2' in key or 'phone2' in key:
+                        edited_data['phone2'] = value
+                    elif '팩스' in key or 'fax' in key:
+                        edited_data['fax'] = value
+                    elif '담당자1' in key or 'contact_person1' in key:
+                        edited_data['contact_person1'] = value
+                    elif '휴대폰1' in key or 'mobile1' in key:
+                        edited_data['mobile1'] = value
+                    elif '담당자2' in key or 'contact_person2' in key:
+                        edited_data['contact_person2'] = value
+                    elif '휴대폰2' in key or 'mobile2' in key:
+                        edited_data['mobile2'] = value
+                    elif '거래처구분' in key or 'client_type' in key:
+                        edited_data['client_type'] = value
+                    elif '출고가등급' in key or 'price_grade' in key:
+                        edited_data['price_grade'] = value
+                    elif '기초잔액' in key or 'initial_balance' in key:
+                        if value:
+                            numbers = re.findall(r'\d+', value.replace(',', ''))
+                            if numbers:
+                                edited_data['initial_balance'] = int(numbers[0])
+                    elif '적정잔액' in key or 'optimal_balance' in key:
+                        if value:
+                            numbers = re.findall(r'\d+', value.replace(',', ''))
+                            if numbers:
+                                edited_data['optimal_balance'] = int(numbers[0])
+                    elif '메모' in key or 'memo' in key:
+                        edited_data['memo'] = value
 
         print(f"[📝] Parsed edited data: {edited_data}")
 
-        # 편집된 데이터로 직접 문서 생성 (워크플로우 우회)
+        # 시나리오별 처리
         try:
             from agents.graph.utils.document_generator import DocumentGenerator
             from pathlib import Path
 
-            # 시나리오 판별
-            if 'unloading_site' in edited_data:
+            # business_registration은 워크플로우를 통해 DB 저장
+            if scenario == "business_registration":
+                # BusinessRegistrationInfo 객체 재생성 (편집된 데이터로)
+                from agents.graph.state import BusinessRegistrationInfo
+
+                # 먼저 기존 state에서 원본 데이터 가져오기
+                config = {"configurable": {"thread_id": self.approval_view.thread_id}}
+                state = workflow_graph.get_state(thread_id=self.approval_view.thread_id)
+
+                # 원본 데이터와 편집된 데이터 병합 (edited_data가 우선)
+                original_info = self.approval_view.original_data.copy()
+                original_info.pop('scenario', None)  # scenario 필드 제거
+                merged_data = {**original_info, **edited_data}  # 편집된 필드만 덮어씀
+
+                print(f"[🔧] Original data fields: {list(original_info.keys())}")
+                print(f"[🔧] Edited data fields: {list(edited_data.keys())}")
+                print(f"[🔧] Merged data business_number: {merged_data.get('business_number')}")
+
+                # 병합된 데이터로 BusinessRegistrationInfo 생성
+                updated_info = BusinessRegistrationInfo(**merged_data)
+
+                if state and state.tasks and len(state.tasks) > 0:
+                    task = state.tasks[0]
+                    print(f"[🔧] Updating business_registration_info with edited data")
+
+                    # Subgraph state 업데이트
+                    workflow_graph.graph.update_state(
+                        task.state,
+                        {
+                            "business_registration_info": updated_info,
+                            "approval_decision": "approve"  # 편집 완료 = 승인
+                        }
+                    )
+                    print(f"[✅] State updated, resuming workflow...")
+
+                # 워크플로우 재개 (save 노드 실행 → DB 저장)
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: workflow_graph.graph.invoke(None, config)
+                )
+
+                # 결과 메시지 전송
+                if "messages" in result and result["messages"]:
+                    latest_msg = result["messages"][-1]
+                    if isinstance(latest_msg, dict):
+                        message_content = latest_msg.get("content", "")
+                    else:
+                        message_content = getattr(latest_msg, "content", "")
+
+                    await interaction.channel.send(message_content)
+                else:
+                    await interaction.channel.send("✅ 처리 완료")
+
+                # 세션 정리
+                active_sessions.pop(self.approval_view.thread_id, None)
+                return
+
+            elif scenario == "delivery":
                 # Delivery 문서 생성
                 result = DocumentGenerator.generate_delivery_document(
                     unloading_site=edited_data.get('unloading_site'),
@@ -381,7 +527,7 @@ class EditModal(discord.ui.Modal, title="정보 편집"):
 
                 pdf_path = Path(result['pdf'])
 
-            elif 'client' in edited_data:
+            elif scenario == "product_order":
                 # Product 문서 생성
                 result = DocumentGenerator.generate_product_order_document(
                     client=edited_data.get('client'),
@@ -405,9 +551,11 @@ class EditModal(discord.ui.Modal, title="정보 편집"):
 - 합계: {total_price:,}원"""
 
                 pdf_path = Path(result['pdf'])
+
             else:
-                message = "❌ 편집된 데이터에서 시나리오를 판별할 수 없습니다."
+                message = f"❌ 알 수 없는 시나리오입니다: {scenario}"
                 pdf_path = None
+                result = {}
 
             # 결과 전송
             await interaction.channel.send(message)
@@ -534,14 +682,22 @@ async def on_ready():
     """봇이 준비되면 실행"""
     global workflow_graph
 
-    # 워크플로우 그래프 초기화 (model_name은 .env의 OPENAI_MODEL_NAME 사용)
-    workflow_graph = OfficeAutomationGraph(
-        temperature=0.0,
-        use_langfuse=True
-    )
-
-    print(f"[✅] {bot.user} has connected to Discord!")
-    print(f"[ℹ️] Bot is ready to process office automation tasks")
+    try:
+        # 워크플로우 그래프 초기화 (model_name은 .env의 OPENAI_MODEL_NAME 사용)
+        print(f"[🔧] Initializing OfficeAutomationGraph...")
+        workflow_graph = OfficeAutomationGraph(
+            temperature=0.0,
+            use_langfuse=True
+        )
+        print(f"[✅] OfficeAutomationGraph initialized successfully")
+        print(f"[✅] {bot.user} has connected to Discord!")
+        print(f"[ℹ️] Bot is ready to process office automation tasks")
+    except Exception as e:
+        print(f"[❌] CRITICAL: Failed to initialize OfficeAutomationGraph: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"[⚠️] Bot will not function properly without workflow_graph!")
+        # Don't raise - let bot stay online but log the error
 
 
 @bot.event
@@ -580,12 +736,35 @@ async def on_message(message):
         await handle_message(message)
         return
 
-    print(f"[⏭️] Skipping message (not DM, not mentioned, and not starting with !)")
+    # 이미지 첨부가 있는 경우 처리
+    if message.attachments:
+        # 이미지 파일 확인
+        image_attachments = [
+            att for att in message.attachments
+            if att.content_type and att.content_type.startswith('image/')
+        ]
+        if image_attachments:
+            print(f"[🔄] Processing message with image attachment...")
+            await handle_message(message)
+            return
+
+    print(f"[⏭️] Skipping message (not DM, not mentioned, not starting with !, and no image)")
 
 
 async def handle_message(message: discord.Message):
     """메시지 처리"""
     try:
+        # 이미지 첨부가 있는 경우 우선 처리
+        if message.attachments:
+            # 이미지 파일 확인
+            image_attachments = [
+                att for att in message.attachments
+                if att.content_type and att.content_type.startswith('image/')
+            ]
+            if image_attachments:
+                await handle_image_message(message, image_attachments[0])
+                return
+
         # 텍스트 메시지 처리
         if message.content:
             await handle_text_message(message)
@@ -598,6 +777,12 @@ async def handle_message(message: discord.Message):
 async def handle_text_message(message: discord.Message):
     """텍스트 메시지 처리"""
     global workflow_graph, user_sessions, active_sessions
+
+    # workflow_graph 초기화 확인
+    if workflow_graph is None:
+        await message.channel.send("❌ 봇이 아직 초기화되지 않았습니다. 잠시 후 다시 시도해주세요.")
+        print(f"[❌] workflow_graph is None - bot not initialized properly")
+        return
 
     # 멘션 제거
     content = message.content.replace(f"<@{bot.user.id}>", "").strip()
@@ -612,9 +797,12 @@ async def handle_text_message(message: discord.Message):
 
     # 사용자별 세션 키
     user_channel_key = f"{message.channel.id}_{message.author.id}"
+    print(f"[🔑] User channel key: {user_channel_key}")
+    print(f"[📍] Channel ID: {message.channel.id}, Author ID: {message.author.id}, Channel type: {type(message.channel)}")
 
     # 현재 활성 세션이 있는지 확인
     current_thread_id = user_sessions.get(user_channel_key)
+    print(f"[🔍] Current thread_id from user_sessions: {current_thread_id}")
 
     # HITL 승인 대기 중이면 무시 (버튼으로만 응답)
     if current_thread_id and active_sessions.get(current_thread_id):
@@ -693,7 +881,7 @@ async def handle_text_message(message: discord.Message):
         state = workflow_graph.get_state(thread_id=thread_id)
 
         # Subgraph interrupt 체크
-        if state and state.next and ("delivery_subgraph" in str(state.next) or "product_subgraph" in str(state.next)):
+        if state and state.next and ("delivery_subgraph" in str(state.next) or "product_subgraph" in str(state.next) or "business_registration_subgraph" in str(state.next)):
             # Interrupt 발생 - subgraph 내부에서 approval 노드 전에 중단됨
             print(f"[⏸️] Interrupt detected: next={state.next}")
 
@@ -710,6 +898,26 @@ async def handle_text_message(message: discord.Message):
                             print(f"[✅] Subgraph state accessed: {list(subgraph_state_values.keys())}")
                     except Exception as e:
                         print(f"[⚠️] Failed to get subgraph state: {e}")
+
+            # Subgraph의 다음 노드 확인 (어느 노드 전에 interrupt 되었는지)
+            subgraph_next_node = None
+            if state.tasks and len(state.tasks) > 0:
+                task = state.tasks[0]
+                if task.state:
+                    try:
+                        subgraph_state_obj = workflow_graph.graph.get_state(task.state)
+                        if subgraph_state_obj and subgraph_state_obj.next:
+                            subgraph_next_node = subgraph_state_obj.next[0] if isinstance(subgraph_state_obj.next, tuple) else subgraph_state_obj.next
+                            print(f"[🔍] Subgraph next node: {subgraph_next_node}")
+                    except Exception as e:
+                        print(f"[⚠️] Failed to get subgraph next node: {e}")
+
+            # wait_for_image interrupt인 경우: 승인 UI 없이 메시지만 표시
+            if subgraph_next_node == "wait_for_image":
+                print(f"[📸] Wait for image interrupt - showing message only")
+                # wait_for_image는 interrupt_before이므로 아직 실행 전 → 하드코딩 메시지 사용
+                await processing_msg.edit(content="📄 **사업자등록증 이미지를 업로드해주세요.**\n\n이미지를 첨부하면 자동으로 정보를 추출합니다.")
+                return
 
             # 승인 메시지 가져오기 (subgraph state에서)
             # 인쇄 승인인지 문서 승인인지 체크
@@ -901,6 +1109,217 @@ async def handle_text_message(message: discord.Message):
         raise
 
 
+async def handle_image_message(message: discord.Message, attachment: discord.Attachment):
+    """이미지 메시지 처리 (사업자등록증 등)"""
+    global workflow_graph, user_sessions, active_sessions
+
+    # workflow_graph 초기화 확인
+    if workflow_graph is None:
+        await message.channel.send("❌ 봇이 아직 초기화되지 않았습니다. 잠시 후 다시 시도해주세요.")
+        print(f"[❌] workflow_graph is None - bot not initialized properly")
+        return
+
+    print(f"[📸] Image received: {attachment.filename}, size: {attachment.size} bytes")
+
+    # 사용자별 세션 키
+    user_channel_key = f"{message.channel.id}_{message.author.id}"
+    print(f"[🔑] User channel key: {user_channel_key}")
+    print(f"[📍] Channel ID: {message.channel.id}, Author ID: {message.author.id}, Channel type: {type(message.channel)}")
+
+    # 현재 활성 세션 확인
+    current_thread_id = user_sessions.get(user_channel_key)
+    print(f"[🔍] Current thread_id from user_sessions: {current_thread_id}")
+    print(f"[📋] All user_sessions keys: {list(user_sessions.keys())}")
+
+    # HITL 승인 대기 중이면 무시
+    if current_thread_id and active_sessions.get(current_thread_id):
+        await message.channel.send("⏸️ 승인 대기 중입니다. 위의 버튼을 사용해주세요.")
+        return
+
+    # 세션이 없으면 새로 생성
+    import time
+    if not current_thread_id:
+        thread_id = f"{user_channel_key}_{int(time.time())}"
+        user_sessions[user_channel_key] = thread_id
+        print(f"[🆕] New session created for image: {thread_id}")
+    else:
+        thread_id = current_thread_id
+        print(f"[🔄] Reusing session for image: {thread_id}")
+
+    # 처리 중 메시지
+    processing_msg = await message.channel.send("🤖 이미지를 처리 중입니다...")
+
+    try:
+        # 이미지 URL 추출
+        image_url = attachment.url
+        print(f"[🔗] Image URL: {image_url}")
+
+        # 현재 세션 상태 확인
+        state = workflow_graph.get_state(thread_id=thread_id)
+
+        # active_scenario는 main graph state에 있음 (subgraph state가 아님)
+        # Subgraph가 interrupt 중이면 state.tasks[0].state에서 찾아야 함
+        active_scenario = None
+
+        # Main graph state에서 먼저 확인
+        if state and state.values:
+            active_scenario = state.values.get("active_scenario")
+            print(f"[🔍] Active scenario from main state: {active_scenario}")
+
+        # Subgraph state에서도 확인 (fallback)
+        if not active_scenario and state and state.tasks and len(state.tasks) > 0:
+            task = state.tasks[0]
+            if task.state:
+                try:
+                    subgraph_state = workflow_graph.graph.get_state(task.state)
+                    if subgraph_state and subgraph_state.values:
+                        active_scenario = subgraph_state.values.get("active_scenario")
+                        print(f"[🔍] Active scenario from subgraph state: {active_scenario}")
+                except Exception as e:
+                    print(f"[⚠️] Failed to get active_scenario from subgraph: {e}")
+
+        print(f"[📊] Final active_scenario: {active_scenario}")
+
+        # active_scenario가 business_registration이고 wait_for_image interrupt 중이면 resume
+        if active_scenario == "business_registration":
+            print(f"[🔄] Business registration in progress, resuming with image")
+
+            # Interrupt 상태에서 resume하려면:
+            # 1. State를 업데이트하여 raw_input에 image_url 설정
+            # 2. invoke(None, config)로 재개
+
+            config = {"configurable": {"thread_id": thread_id}}
+
+            # Subgraph state 업데이트 (tasks[0].state를 통해 subgraph에 접근)
+            if state and state.tasks and len(state.tasks) > 0:
+                task = state.tasks[0]
+                print(f"[🔧] Updating subgraph state with image_url: {image_url[:100]}...")
+
+                # Subgraph state 업데이트
+                workflow_graph.graph.update_state(
+                    task.state,
+                    {
+                        "raw_input": image_url,
+                        "input_type": "image"
+                    }
+                )
+                print(f"[✅] Subgraph state updated")
+            else:
+                print(f"[⚠️] No tasks found - updating main graph state")
+                # Fallback: main graph state 업데이트
+                workflow_graph.graph.update_state(
+                    config,
+                    {
+                        "raw_input": image_url,
+                        "input_type": "image"
+                    }
+                )
+
+            # Resume workflow (None을 전달하여 interrupt에서 재개)
+            print(f"[🚀] Invoking graph to resume from wait_for_image interrupt...")
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: workflow_graph.graph.invoke(None, config)
+            )
+
+            print(f"[🔍] Result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
+
+            # Interrupt 체크 (approval)
+            state_after = workflow_graph.get_state(thread_id=thread_id)
+
+            if state_after and state_after.next:
+                print(f"[⏸️] Interrupt detected after image parse: next={state_after.next}")
+
+                # Subgraph state 접근
+                subgraph_state_values = None
+                if state_after.tasks and len(state_after.tasks) > 0:
+                    task = state_after.tasks[0]
+                    if task.state:
+                        try:
+                            subgraph_state = workflow_graph.graph.get_state(task.state)
+                            if subgraph_state and subgraph_state.values:
+                                subgraph_state_values = subgraph_state.values
+                                print(f"[✅] Subgraph state after parse: {list(subgraph_state_values.keys())}")
+                        except Exception as e:
+                            print(f"[⚠️] Failed to get subgraph state: {e}")
+
+                # 승인 메시지 가져오기
+                approval_msg = "승인이 필요합니다"
+                original_data = {}
+
+                if subgraph_state_values:
+                    print(f"[📝] awaiting_approval: {subgraph_state_values.get('awaiting_approval')}")
+                    print(f"[📝] business_registration_info exists: {bool(subgraph_state_values.get('business_registration_info'))}")
+
+                    if subgraph_state_values.get("awaiting_approval"):
+                        approval_msg = subgraph_state_values.get("approval_message", "승인이 필요합니다")
+                        print(f"[📝] Approval message length: {len(approval_msg)}")
+
+                        # BusinessRegistrationInfo 추출
+                        if subgraph_state_values.get("business_registration_info"):
+                            info = subgraph_state_values["business_registration_info"]
+                            original_data = {
+                                "client_name": info.client_name,
+                                "business_name": info.business_name,
+                                "representative_name": info.representative_name,
+                                "business_number": info.business_number,
+                                "branch_number": info.branch_number,
+                                "postal_code": info.postal_code,
+                                "address1": info.address1,
+                                "address2": info.address2,
+                                "business_type": info.business_type,
+                                "business_item": info.business_item,
+                                "phone1": info.phone1,
+                                "phone2": info.phone2,
+                                "fax": info.fax,
+                                "contact_person1": info.contact_person1,
+                                "mobile1": info.mobile1,
+                                "contact_person2": info.contact_person2,
+                                "mobile2": info.mobile2,
+                                "client_type": info.client_type,
+                                "price_grade": info.price_grade,
+                                "initial_balance": info.initial_balance,
+                                "optimal_balance": info.optimal_balance,
+                                "memo": info.memo,
+                                "scenario": "business_registration"
+                            }
+
+                # 승인 버튼 UI 생성
+                view = ApprovalView(thread_id=thread_id, original_data=original_data)
+                active_sessions[thread_id] = True
+
+                await processing_msg.delete()
+                await message.channel.send(approval_msg, view=view)
+                print(f"[✅] Approval request sent for business registration")
+                return
+
+            # Interrupt 없으면 완료
+            if "messages" in result and result["messages"]:
+                latest_msg = result["messages"][-1]
+                if isinstance(latest_msg, dict):
+                    content = latest_msg.get("content", "")
+                else:
+                    content = getattr(latest_msg, "content", "")
+
+                if content:
+                    await processing_msg.edit(content=content)
+                else:
+                    await processing_msg.edit(content="✅ 처리 완료")
+            else:
+                await processing_msg.edit(content="✅ 처리 완료")
+
+        else:
+            # business_registration이 아닌 경우: 일반 이미지는 무시하거나 안내
+            await processing_msg.edit(content="❓ 이미지가 첨부되었지만, 사업자등록증 등록 모드가 아닙니다.\n먼저 '사업자 등록해줘'라고 입력해주세요.")
+
+    except Exception as e:
+        await processing_msg.edit(content=f"❌ 이미지 처리 실패: {str(e)}")
+        print(f"[❌] Image processing error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 # handle_approval_response는 더 이상 필요 없음 (UI 버튼이 직접 처리)
 
 
@@ -935,6 +1354,7 @@ async def guide_command(ctx):
 - `!start` - 새로운 워크플로우 시작
 - `!guide` - 이 가이드 표시
 - `!status` - 현재 워크플로우 상태 확인
+- `!reset` - 현재 세션 초기화 (세션이 꼬였을 때 사용)
 
 **예시:**
 ```
@@ -961,6 +1381,24 @@ async def status_command(ctx):
         await ctx.send(f"{status}\n세션 ID: `{current_thread_id}`")
     else:
         await ctx.send("ℹ️ 활성 세션이 없습니다.\n`!start` 명령어로 새 세션을 시작하세요.")
+
+
+@bot.command(name="reset")
+async def reset_command(ctx):
+    """현재 세션 초기화"""
+    global user_sessions, active_sessions
+
+    user_channel_key = f"{ctx.channel.id}_{ctx.author.id}"
+    current_thread_id = user_sessions.get(user_channel_key)
+
+    if current_thread_id:
+        # 세션 정리
+        user_sessions.pop(user_channel_key, None)
+        active_sessions.pop(current_thread_id, None)
+        print(f"[🗑️] Session reset by user: {current_thread_id}")
+        await ctx.send(f"🔄 세션이 초기화되었습니다.\n이전 세션 ID: `{current_thread_id}`\n\n새로운 작업을 시작하려면 봇을 멘션하거나 `!` 로 시작하는 메시지를 입력하세요.")
+    else:
+        await ctx.send("ℹ️ 초기화할 활성 세션이 없습니다.")
 
 
 def main():

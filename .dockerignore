@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+bot.log
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+test/
+tests/
+*_test.py
+test_*.py
+
+# Output directory (will be mounted as volume)
+output/
+
+# Misc
+.DS_Store
+*.bak

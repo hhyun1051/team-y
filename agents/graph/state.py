@@ -23,15 +23,16 @@ class OfficeAutomationState(TypedDict):
     input_type: Literal["text", "voice"]  # 입력 타입
 
     # 분류 결과
-    scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation", "help"]]  # 시나리오
+    scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation", "business_registration", "help"]]  # 시나리오
     confidence: Optional[float]  # 분류 신뢰도
-    active_scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation"]]  # 진행 중인 시나리오 (멀티턴 유지)
+    active_scenario: Optional[Literal["delivery", "product_order", "aluminum_calculation", "business_registration"]]  # 진행 중인 시나리오 (멀티턴 유지)
     active_scenario_timestamp: Optional[float]  # active_scenario 설정 시간 (Unix timestamp)
 
     # 파싱 결과 (시나리오별로 다른 타입)
     delivery_info: Optional["DeliveryInfo"]  # 운송장 정보
     product_order_info: Optional["ProductOrderInfo"]  # 제품 주문 정보
     aluminum_calculation_info: Optional["AluminumCalculationInfo"]  # 알루미늄 계산 정보
+    business_registration_info: Optional["BusinessRegistrationInfo"]  # 사업자등록증 정보
     parsing_error: Optional[str]  # 파싱 에러 메시지
 
     # HITL 상태 (Human-in-the-Loop)
@@ -50,6 +51,10 @@ class OfficeAutomationState(TypedDict):
     docx_path: Optional[str]  # DOCX 파일 경로
     pdf_path: Optional[str]  # PDF 파일 경로
     image_paths: Optional[list]  # 이미지 파일 경로 리스트 (PNG)
+
+    # 사업자등록증 DB 저장 결과
+    erp_code: Optional[int]  # 생성된 ERP 코드
+    db_record_id: Optional[int]  # DB 레코드 ID
 
     # 워크플로우 제어
     current_step: Literal[
@@ -70,8 +75,8 @@ class OfficeAutomationState(TypedDict):
 
 class IntentClassification(BaseModel):
     """의도 분류 결과"""
-    scenario: Literal["delivery", "product_order", "aluminum_calculation", "help"] = Field(
-        description="시나리오 구분: delivery(운송장), product_order(거래명세서), aluminum_calculation(알루미늄 계산), help(도움말)"
+    scenario: Literal["delivery", "product_order", "aluminum_calculation", "business_registration", "help"] = Field(
+        description="시나리오 구분: delivery(운송장), product_order(거래명세서), aluminum_calculation(알루미늄 계산), business_registration(사업자등록증), help(도움말)"
     )
     confidence: float = Field(description="분류 신뢰도 (0.0~1.0)")
     reasoning: Optional[str] = Field(None, description="분류 근거")
@@ -114,7 +119,7 @@ class AluminumCalculationInfo(BaseModel):
         description="제품 형상"
     )
     length_m: float = Field(description="길이 (m 단위)")
-    
+
     # 형상별 치수
     width: Optional[float] = Field(None, description="폭 (mm)")
     height: Optional[float] = Field(None, description="높이 (mm)")
@@ -124,13 +129,48 @@ class AluminumCalculationInfo(BaseModel):
     width_b: Optional[float] = Field(None, description="앵글 폭 B (mm)")
     channel_height: Optional[float] = Field(None, description="찬넬 웹 높이 (mm)")
     channel_width: Optional[float] = Field(None, description="찬넬 플랜지 폭 (mm)")
-    
+
     # 필수 정보
     quantity: int = Field(description="수량")
     density: float = Field(description="비중")
 
     # 선택 정보
     price_per_kg: Optional[int] = Field(None, description="kg당 단가 (선택, 없으면 중량만 계산)")
-    
+
     confidence: Optional[float] = Field(None, description="파싱 신뢰도 (0.0~1.0)")
     notes: Optional[str] = Field(None, description="추가 메모")
+
+
+class BusinessRegistrationInfo(BaseModel):
+    """사업자등록증 정보 (거래처 등록)"""
+    # 필수 필드 (LLM 파싱)
+    client_name: str = Field(description="거래처명")
+    business_name: str = Field(description="상호")
+
+    # 선택 필드 (LLM 파싱)
+    representative_name: Optional[str] = Field(None, description="대표자명")
+    business_number: Optional[str] = Field(None, description="사업자등록번호 (형식: XXX-XX-XXXXX, - 포함 필수)")
+    branch_number: Optional[str] = Field(None, description="종사업자번호 (숫자만)")
+    postal_code: Optional[str] = Field(None, description="우편번호 (형식: XXX-XXX, 7자)")
+    address1: Optional[str] = Field(None, description="주소1 (예: 광주 광산구 월계동)")
+    address2: Optional[str] = Field(None, description="주소2 (예: 49-998)")
+    business_type: Optional[str] = Field(None, description="업태 (예: 유통, 도소매)")
+    business_item: Optional[str] = Field(None, description="종목 (예: 축산물, 가구)")
+    phone1: Optional[str] = Field(None, description="전화1 (숫자+하이픈, 최대 15자)")
+    phone2: Optional[str] = Field(None, description="전화2 (숫자+하이픈, 최대 15자)")
+    fax: Optional[str] = Field(None, description="팩스 (숫자+하이픈, 최대 15자)")
+    contact_person1: Optional[str] = Field(None, description="거래처담당자1 (최대 한글 15자)")
+    mobile1: Optional[str] = Field(None, description="휴대폰1 (숫자+하이픈, 최대 15자)")
+    contact_person2: Optional[str] = Field(None, description="거래처담당자2 (최대 한글 15자)")
+    mobile2: Optional[str] = Field(None, description="휴대폰2 (숫자+하이픈, 최대 15자)")
+    memo: Optional[str] = Field(None, description="메모")
+
+    # 필수 필드 (수동 입력 - LLM 파싱하지 않음, 편집 시 입력)
+    client_type: Optional[Literal["I", "O", "M"]] = Field(None, description="거래처구분: I(매입처), O(매출처), M(기타)")
+    price_grade: Optional[Literal["O", "Z", "N", "E"]] = Field(None, description="출고가등급/과세여부: O(별도), Z(영세), N(면세), E(없음)")
+    initial_balance: int = Field(default=0, description="기초잔액 (기본값: 0)")
+    optimal_balance: int = Field(default=0, description="적정잔액 (기본값: 0)")
+
+    # 메타데이터
+    confidence: Optional[float] = Field(None, description="파싱 신뢰도 (0.0~1.0)")
+    image_url: Optional[str] = Field(None, description="원본 이미지 URL")

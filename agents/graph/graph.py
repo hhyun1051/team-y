@@ -25,8 +25,9 @@ from .utils.intent_classifier import IntentClassifier
 from .utils.delivery_parser import DeliveryParser
 from .utils.product_parser import ProductOrderParser
 from .utils.aluminum_parser import AluminumCalculationParser
+from .utils.business_registration_parser import BusinessRegistrationParser
 from .utils.document_generator import DocumentGenerator
-from .subgraphs import create_delivery_subgraph, create_product_subgraph, create_aluminum_subgraph
+from .subgraphs import create_delivery_subgraph, create_product_subgraph, create_aluminum_subgraph, create_business_registration_subgraph
 
 
 class OfficeAutomationGraph:
@@ -69,6 +70,7 @@ class OfficeAutomationGraph:
         self.delivery_parser = DeliveryParser(model_name=model_name, temperature=temperature)
         self.product_parser = ProductOrderParser(model_name=model_name, temperature=temperature)
         self.aluminum_parser = AluminumCalculationParser(model_name=model_name, temperature=temperature)
+        self.business_registration_parser = BusinessRegistrationParser(model_name="gpt-4o", temperature=temperature)  # Vision 모델 사용
 
         # 체크포인터 (메모리 저장)
         self.checkpointer = MemorySaver()
@@ -87,6 +89,10 @@ class OfficeAutomationGraph:
         )
         self.aluminum_subgraph = create_aluminum_subgraph(
             parser=self.aluminum_parser
+        )
+        self.business_registration_subgraph = create_business_registration_subgraph(
+            checkpointer=self.checkpointer,
+            parser=self.business_registration_parser
         )
 
         # 메인 그래프 빌드
@@ -118,6 +124,7 @@ class OfficeAutomationGraph:
         workflow.add_node("delivery_subgraph", self.delivery_subgraph)
         workflow.add_node("product_subgraph", self.product_subgraph)
         workflow.add_node("aluminum_subgraph", self.aluminum_subgraph)
+        workflow.add_node("business_registration_subgraph", self.business_registration_subgraph)
 
         # 엣지 연결
         workflow.set_entry_point("classify_intent")
@@ -129,6 +136,7 @@ class OfficeAutomationGraph:
         workflow.add_edge("delivery_subgraph", END)
         workflow.add_edge("product_subgraph", END)
         workflow.add_edge("aluminum_subgraph", END)
+        workflow.add_edge("business_registration_subgraph", END)
 
         # Compile
         return workflow.compile(checkpointer=self.checkpointer)
@@ -155,6 +163,7 @@ class OfficeAutomationGraph:
             "delivery": "delivery_subgraph",
             "product_order": "product_subgraph",
             "aluminum_calculation": "aluminum_subgraph",
+            "business_registration": "business_registration_subgraph",
         }
 
         # 멀티턴 대화: active_scenario가 있으면 그대로 유지
@@ -181,12 +190,22 @@ class OfficeAutomationGraph:
         next_node = route_map.get(intent.scenario, "help")
         print(f"[🧭] Routing to: {next_node}")
 
+        # 업데이트할 상태 준비
+        update_dict = {
+            "scenario": intent.scenario,
+            "confidence": intent.confidence
+        }
+
+        # business_registration 시나리오인 경우 active_scenario 설정 (멀티턴 활성화)
+        if intent.scenario == "business_registration":
+            import time
+            update_dict["active_scenario"] = "business_registration"
+            update_dict["active_scenario_timestamp"] = time.time()
+            print(f"[🔒] Setting active_scenario to business_registration for multi-turn")
+
         return Command(
             goto=next_node,
-            update={
-                "scenario": intent.scenario,
-                "confidence": intent.confidence
-            }
+            update=update_dict
         )
 
     def _help_node(self, state: OfficeAutomationState) -> Dict[str, Any]:
@@ -246,10 +265,22 @@ class OfficeAutomationGraph:
 
 ---
 
+**4️⃣ 사업자등록증 등록**
+사업자등록증 이미지를 업로드하면 자동으로 정보를 추출하고 거래처로 등록합니다.
+
+**입력 예시:**
+- `사업자 등록해줘`
+- `거래처 등록`
+
+→ 이미지 업로드 → 자동 OCR → 정보 확인 → 등록 완료
+
+---
+
 **📌 사용 방법:**
 1. 위 정보를 입력하시면 자동으로 처리됩니다
 2. 문서 생성은 확인 버튼(승인/거절/편집)이 표시됩니다
 3. 알루미늄 계산은 즉시 결과가 표시됩니다
+4. 사업자등록증은 이미지 업로드 후 편집 가능합니다
 
 궁금하신 점이 있으시면 언제든지 물어보세요! 😊"""
 

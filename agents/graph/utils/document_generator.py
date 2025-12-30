@@ -22,8 +22,9 @@ load_dotenv()
 class DocumentGenerator:
     """문서 생성 및 PDF 변환 유틸리티"""
 
-    TEMPLATE_DIR = Path("/root/team-y/templates")
-    OUTPUT_DIR = Path("/tmp")
+    # Docker 환경을 고려한 경로 설정
+    TEMPLATE_DIR = Path(os.getenv("TEMPLATE_DIR", "/app/templates"))
+    OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/app/output"))
 
     # HP ePrint 설정 (환경 변수에서 로드)
     HP_PRINTER_EMAIL = os.getenv("HP_PRINTER_EMAIL")
