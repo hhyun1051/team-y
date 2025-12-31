@@ -6,7 +6,11 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
+
+# Old dependency files
+requirements.txt.backup
 
 # Git
 .git/

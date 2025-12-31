@@ -18,12 +18,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first (for layer caching)
-COPY requirements.txt .
+# Copy dependency files first (for layer caching)
+COPY pyproject.toml uv.lock ./
 
 # Install Python dependencies using uv with cache mount
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -r requirements.txt
+    uv sync --frozen --no-dev --no-editable
+
+# Copy application code
+COPY . .
+
+# Install project in editable mode
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system -e .
 
 # Run the bot
 CMD ["python", "-u", "bot/main.py"]
